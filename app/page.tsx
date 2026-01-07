@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
-import { sdk } from '@farcaster/miniapp-sdk';
+import { sdk } from '@farcaster/frame-sdk';
 import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage } from 'wagmi';
 import { 
   Transaction, 
@@ -178,9 +178,8 @@ interface VerifiedPointsEntry {
   totalClicks: number;
   burnCount: number;
   totalBurned: number;
-  signature: string;
   timestamp: number;
-  sessionDuration: number;
+  verified: boolean;
 }
 
 // ============ HELPER: Match ETH amount to shop item ============
@@ -377,12 +376,339 @@ export default function MinerGame() {
   const [playerName, setPlayerName] = useState('');
   const [submittingScore, setSubmittingScore] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [offlineEarnings, setOfflineEarnings] = useState<{ gold: number; minutes: number } | null>(null);
 
   // Update current time for boost calculations
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // ============ SESSION MANAGEMENT (ONE DEVICE PER WALLET) ============
+  
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [showSessionConflict, setShowSessionConflict] = useState(false);
+  const [conflictInfo, setConflictInfo] = useState<{ deviceInfo: string; lastHeartbeat: number } | null>(null);
+  const [isKicked, setIsKicked] = useState(false);
+  const sessionHeartbeatRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Get device info for session tracking
+  const getDeviceInfo = () => {
+    if (typeof window === 'undefined') return 'Unknown';
+    const ua = navigator.userAgent;
+    if (/iPhone|iPad|iPod/.test(ua)) return 'iOS Device';
+    if (/Android/.test(ua)) return 'Android Device';
+    if (/Windows/.test(ua)) return 'Windows PC';
+    if (/Mac/.test(ua)) return 'Mac';
+    if (/Linux/.test(ua)) return 'Linux PC';
+    return 'Unknown Device';
+  };
+
+  // Create session when wallet connects
+  const createSession = useCallback(async (forceTakeover = false) => {
+    if (!address || !signMessageAsync) return false;
+    
+    setSessionError(null);
+    
+    try {
+      const timestamp = Date.now();
+      const action = forceTakeover ? 'takeover' : 'create';
+      const message = forceTakeover 
+        ? `BaseGold Takeover\nAddress: ${address}\nTimestamp: ${timestamp}`
+        : `BaseGold Session\nAddress: ${address}\nTimestamp: ${timestamp}`;
+      
+      const signature = await signMessageAsync({ message });
+      
+      const response = await fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          address,
+          signature,
+          message,
+          deviceInfo: getDeviceInfo(),
+          timestamp,
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.conflict && !forceTakeover) {
+        // Another device is playing
+        setConflictInfo({
+          deviceInfo: data.existingSession.deviceInfo,
+          lastHeartbeat: data.existingSession.lastHeartbeat,
+        });
+        setShowSessionConflict(true);
+        return false;
+      }
+      
+      if (data.success && data.sessionId) {
+        setSessionId(data.sessionId);
+        setShowSessionConflict(false);
+        setConflictInfo(null);
+        console.log('🎮 Session created:', data.sessionId.slice(0, 8));
+        return true;
+      }
+      
+      setSessionError(data.error || 'Failed to create session');
+      return false;
+      
+    } catch (error: any) {
+      if (error.message?.includes('User rejected')) {
+        setSessionError('Signature cancelled - session required to play');
+      } else {
+        setSessionError('Failed to create session');
+      }
+      return false;
+    }
+  }, [address, signMessageAsync]);
+
+  // Session heartbeat
+  useEffect(() => {
+    if (!sessionId || !address) return;
+    
+    const sendHeartbeat = async () => {
+      try {
+        const response = await fetch('/api/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'heartbeat',
+            address,
+            sessionId,
+          }),
+        });
+        
+        const data = await response.json();
+        
+        if (data.kicked) {
+          // We've been kicked by another device
+          setIsKicked(true);
+          setSessionId(null);
+          console.log('⚠️ Kicked by another device');
+        }
+      } catch (error) {
+        console.error('Heartbeat error:', error);
+      }
+    };
+    
+    // Send heartbeat every 25 seconds
+    sessionHeartbeatRef.current = setInterval(sendHeartbeat, 25000);
+    
+    // Also send initial heartbeat
+    sendHeartbeat();
+    
+    return () => {
+      if (sessionHeartbeatRef.current) {
+        clearInterval(sessionHeartbeatRef.current);
+      }
+    };
+  }, [sessionId, address]);
+
+  // End session on disconnect
+  useEffect(() => {
+    if (!address && sessionId) {
+      // Wallet disconnected, end session
+      fetch('/api/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'end',
+          address,
+          sessionId,
+        }),
+      }).catch(() => {});
+      setSessionId(null);
+    }
+  }, [address, sessionId]);
+
+  // End session on page unload
+  useEffect(() => {
+    const handleUnload = () => {
+      if (sessionId && address) {
+        navigator.sendBeacon('/api/session', JSON.stringify({
+          action: 'end',
+          address,
+          sessionId,
+        }));
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleUnload);
+    return () => window.removeEventListener('beforeunload', handleUnload);
+  }, [sessionId, address]);
+
+  // ============ SECURE GAME STATE PERSISTENCE (SERVER-SIDE) ============
+  
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [isLoadingGame, setIsLoadingGame] = useState(false);
+  const lastSaveTime = useRef(0);
+  const hasLoadedGame = useRef(false);
+  
+  // Load game state from server when wallet connects AND session is created
+  useEffect(() => {
+    if (!address || !sessionId || hasLoadedGame.current) return;
+    
+    const loadGame = async () => {
+      setIsLoadingGame(true);
+      try {
+        const response = await fetch(`/api/game?address=${address}`);
+        const data = await response.json();
+        
+        if (data.gameState) {
+          console.log('📂 Loading saved game from server for', address.slice(0, 6));
+          
+          // Restore state
+          if (typeof data.gameState.gold === 'number') setGold(data.gameState.gold);
+          if (typeof data.gameState.totalClicks === 'number') setTotalClicks(data.gameState.totalClicks);
+          if (data.gameState.upgrades) setUpgrades(data.gameState.upgrades);
+          if (Array.isArray(data.gameState.appliedInstantGold)) {
+            setAppliedInstantGold(new Set(data.gameState.appliedInstantGold));
+          }
+          
+          // Apply offline earnings (calculated server-side)
+          if (data.offlineGold && data.offlineGold > 0) {
+            setGold(prev => prev + data.offlineGold);
+            console.log(`💰 Offline earnings: +${data.offlineGold} gold (${data.offlineMinutes} min)`);
+            setOfflineEarnings({ gold: data.offlineGold, minutes: data.offlineMinutes });
+            setTimeout(() => setOfflineEarnings(null), 5000);
+          }
+          
+          hasLoadedGame.current = true;
+        } else {
+          console.log('🆕 New player, no saved game found');
+          hasLoadedGame.current = true;
+        }
+      } catch (error) {
+        console.error('Error loading game from server:', error);
+        // Fall back to allowing play without save
+        hasLoadedGame.current = true;
+      }
+      setIsLoadingGame(false);
+    };
+    
+    loadGame();
+  }, [address, sessionId]);
+
+  // Reset hasLoadedGame when wallet disconnects
+  useEffect(() => {
+    if (!address) {
+      hasLoadedGame.current = false;
+      // Reset game state
+      setGold(0);
+      setTotalClicks(0);
+      setUpgrades(INITIAL_UPGRADES);
+      setAppliedInstantGold(new Set());
+    }
+  }, [address]);
+  
+  // Save game to server (requires signature and valid session)
+  const saveGameToServer = useCallback(async (requireSignature = false) => {
+    if (!address || !signMessageAsync || !sessionId) {
+      if (!sessionId) setSaveError('Session required - please reconnect wallet');
+      return false;
+    }
+    
+    // Check if kicked
+    if (isKicked) {
+      setSaveError('Session ended - another device is playing');
+      return false;
+    }
+    
+    // Rate limit saves to every 30 seconds minimum
+    const now = Date.now();
+    if (now - lastSaveTime.current < 30000 && !requireSignature) return false;
+    
+    setIsSaving(true);
+    setSaveError(null);
+    
+    try {
+      const timestamp = Date.now();
+      const message = `BaseGold Save\nAddress: ${address}\nTimestamp: ${timestamp}`;
+      
+      // Sign the save request
+      const signature = await signMessageAsync({ message });
+      
+      const gameState = {
+        gold,
+        totalClicks,
+        upgrades,
+        appliedInstantGold: Array.from(appliedInstantGold),
+        lastSaved: timestamp,
+        goldPerSecond,
+        totalPlayTime: timestamp - sessionStartTime.current,
+        sessionStart: sessionStartTime.current,
+        lastClickTimestamp: lastClickTime,
+        clicksThisSession: totalClicks,
+      };
+      
+      const response = await fetch('/api/game', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address,
+          signature,
+          message,
+          gameState,
+          timestamp,
+          sessionId,
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        if (data.kicked) {
+          setIsKicked(true);
+          setSessionId(null);
+          setSaveError('Session ended - another device took over');
+          return false;
+        }
+        if (data.flagged) {
+          setSaveError('⚠️ Suspicious activity detected');
+          console.error('Anti-cheat flagged:', data.reason);
+        } else {
+          setSaveError(data.error || 'Save failed');
+        }
+        return false;
+      }
+      
+      lastSaveTime.current = now;
+      console.log('💾 Game saved to server');
+      return true;
+      
+    } catch (error: any) {
+      if (error.message?.includes('User rejected')) {
+        setSaveError('Signature cancelled');
+      } else {
+        console.error('Error saving game:', error);
+        setSaveError('Save failed');
+      }
+      return false;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [address, signMessageAsync, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, goldPerSecond, lastClickTime]);
+  
+  // Auto-save reminder (prompts user to save periodically)
+  const [showSaveReminder, setShowSaveReminder] = useState(false);
+  
+  useEffect(() => {
+    if (!address || !isConnected) return;
+    
+    // Remind to save every 5 minutes if they have significant progress
+    const interval = setInterval(() => {
+      if (gold > 1000 && Date.now() - lastSaveTime.current > 5 * 60 * 1000) {
+        setShowSaveReminder(true);
+      }
+    }, 60000);
+    
+    return () => clearInterval(interval);
+  }, [address, isConnected, gold]);
 
   // Calculate verified bonuses
   const verifiedBonuses = useMemo(() => 
@@ -589,17 +915,17 @@ export default function MinerGame() {
     setLoadingLeaderboard(false);
   }, [publicClient]);
 
-  const loadPointsLeaderboard = useCallback(() => {
+  const loadPointsLeaderboard = useCallback(async () => {
     try {
-      const saved = localStorage.getItem('basegold-verified-leaderboard-v2');
-      if (saved) {
-        const data = JSON.parse(saved) as VerifiedPointsEntry[];
-        setPointsLeaderboard(data
-          .filter(e => Date.now() - e.timestamp < 30 * 24 * 60 * 60 * 1000)
-          .sort((a, b) => b.gold - a.gold)
-          .slice(0, 50));
+      const response = await fetch('/api/leaderboard');
+      const data = await response.json();
+      
+      if (data.leaderboard) {
+        setPointsLeaderboard(data.leaderboard);
       }
-    } catch {}
+    } catch (error) {
+      console.error('Error fetching points leaderboard:', error);
+    }
   }, []);
 
   useEffect(() => {
@@ -609,10 +935,18 @@ export default function MinerGame() {
     }
   }, [activeTab, fetchBurnLeaderboard, loadPointsLeaderboard]);
 
-  // ============ SIGNED SCORE SUBMISSION ============
+  // ============ SERVER-SIDE SCORE SUBMISSION ============
   
   const submitVerifiedScore = useCallback(async () => {
-    if (!address || !signMessageAsync) return;
+    if (!address || !signMessageAsync || !sessionId) {
+      setSubmitError('Session required - please reconnect wallet');
+      return;
+    }
+    
+    if (isKicked) {
+      setSubmitError('Session ended - another device is playing');
+      return;
+    }
     
     setSubmitError(null);
     
@@ -624,54 +958,58 @@ export default function MinerGame() {
     setSubmittingScore(true);
     
     try {
+      // First, save the game to ensure server has latest state
+      await saveGameToServer(true);
+      
       const timestamp = Date.now();
-      const message = `BaseGold Score Submission\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nBurns: ${userBurnCount}\nTimestamp: ${timestamp}`;
+      const message = `BaseGold Leaderboard\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nTimestamp: ${timestamp}`;
       
       const signature = await signMessageAsync({ message });
       
       const name = playerName.trim() || address.slice(0, 6) + '...' + address.slice(-4);
       
-      const newEntry: VerifiedPointsEntry = {
-        address,
-        name,
-        gold,
-        totalClicks,
-        burnCount: userBurnCount,
-        totalBurned: userBurnAmount,
-        signature,
-        timestamp,
-        sessionDuration: Date.now() - sessionStartTime.current,
-      };
-
-      const saved = localStorage.getItem('basegold-verified-leaderboard-v2');
-      let leaderboard: VerifiedPointsEntry[] = saved ? JSON.parse(saved) : [];
+      const response = await fetch('/api/leaderboard', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          address,
+          signature,
+          name,
+          gold,
+          totalClicks,
+          timestamp,
+          sessionId,
+        }),
+      });
       
-      const existingIndex = leaderboard.findIndex(e => e.address.toLowerCase() === address.toLowerCase());
+      const data = await response.json();
       
-      if (existingIndex >= 0) {
-        if (gold > leaderboard[existingIndex].gold) {
-          leaderboard[existingIndex] = newEntry;
+      if (!response.ok) {
+        if (data.kicked) {
+          setIsKicked(true);
+          setSessionId(null);
+          setSubmitError('Session ended - another device took over');
+          return;
         }
-      } else {
-        leaderboard.push(newEntry);
+        setSubmitError(data.error || 'Failed to submit score');
+        return;
       }
       
-      leaderboard = leaderboard
-        .filter(e => Date.now() - e.timestamp < 30 * 24 * 60 * 60 * 1000)
-        .sort((a, b) => b.gold - a.gold)
-        .slice(0, 100);
+      // Refresh leaderboard
+      await loadPointsLeaderboard();
       
-      localStorage.setItem('basegold-verified-leaderboard-v2', JSON.stringify(leaderboard));
-      setPointsLeaderboard(leaderboard.slice(0, 50));
-      
-      alert('✅ Score submitted and verified! 🏆');
+      alert(`✅ Score submitted! Rank: #${data.rank} 🏆`);
     } catch (error: any) {
       console.error('Error submitting score:', error);
-      setSubmitError(error.message || 'Failed to sign score');
+      if (error.message?.includes('User rejected')) {
+        setSubmitError('Signature cancelled');
+      } else {
+        setSubmitError(error.message || 'Failed to submit score');
+      }
     }
     
     setSubmittingScore(false);
-  }, [address, signMessageAsync, gold, totalClicks, userBurnCount, userBurnAmount, playerName]);
+  }, [address, signMessageAsync, sessionId, isKicked, gold, totalClicks, userBurnCount, playerName, saveGameToServer, loadPointsLeaderboard]);
 
   // ============ GAME LOGIC ============
 
@@ -829,6 +1167,123 @@ export default function MinerGame() {
         />
       ))}
 
+      {/* Offline Earnings Notification */}
+      {offlineEarnings && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 animate-pulse">
+          <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-3 rounded-xl shadow-2xl border border-green-400">
+            <div className="flex items-center gap-3">
+              <span className="text-3xl">💰</span>
+              <div>
+                <div className="text-white font-bold">Welcome back!</div>
+                <div className="text-green-200 text-sm">
+                  +{formatNumber(offlineEarnings.gold)} gold earned while away ({offlineEarnings.minutes} min)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Session Conflict Modal */}
+      {showSessionConflict && conflictInfo && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
+          <div className="bg-[#1A1A1A] border border-yellow-500/50 rounded-2xl p-6 max-w-sm w-full">
+            <div className="text-center">
+              <div className="text-5xl mb-4">⚠️</div>
+              <h2 className="text-xl font-bold text-yellow-400 mb-2">Session Active Elsewhere</h2>
+              <p className="text-gray-400 text-sm mb-4">
+                Another device is currently playing with this wallet:
+              </p>
+              <div className="bg-black/50 rounded-lg p-3 mb-4">
+                <div className="text-white font-medium">{conflictInfo.deviceInfo}</div>
+                <div className="text-xs text-gray-500">
+                  Last active: {new Date(conflictInfo.lastHeartbeat).toLocaleTimeString()}
+                </div>
+              </div>
+              <p className="text-yellow-300 text-xs mb-4">
+                Only one device can play per wallet to prevent cheating.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    setShowSessionConflict(false);
+                    setConflictInfo(null);
+                  }}
+                  className="flex-1 py-2 bg-gray-700 text-white rounded-lg font-medium"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => createSession(true)}
+                  className="flex-1 py-2 bg-yellow-500 text-black rounded-lg font-medium"
+                >
+                  Take Over
+                </button>
+              </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Taking over will end the session on the other device
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Kicked Overlay */}
+      {isKicked && (
+        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4">
+          <div className="bg-[#1A1A1A] border border-red-500/50 rounded-2xl p-6 max-w-sm w-full">
+            <div className="text-center">
+              <div className="text-5xl mb-4">🚫</div>
+              <h2 className="text-xl font-bold text-red-400 mb-2">Session Ended</h2>
+              <p className="text-gray-400 text-sm mb-4">
+                Another device has taken over this wallet's session.
+              </p>
+              <p className="text-red-300 text-xs mb-4">
+                Your progress since last save may be lost.
+              </p>
+              <button
+                onClick={() => {
+                  setIsKicked(false);
+                  createSession(true);
+                }}
+                className="w-full py-3 bg-red-500 text-white rounded-lg font-medium"
+              >
+                Reclaim Session
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Session Required Banner (when connected but no session) */}
+      {isConnected && !sessionId && !showSessionConflict && !isKicked && (
+        <div className="fixed inset-0 bg-black/80 z-40 flex items-center justify-center p-4">
+          <div className="bg-[#1A1A1A] border border-[#D4AF37]/50 rounded-2xl p-6 max-w-sm w-full">
+            <div className="text-center">
+              <div className="text-5xl mb-4">🔐</div>
+              <h2 className="text-xl font-bold text-[#D4AF37] mb-2">Session Required</h2>
+              <p className="text-gray-400 text-sm mb-4">
+                Sign a message to start playing. This prevents cheating by ensuring only one device can play per wallet.
+              </p>
+              {sessionError && (
+                <div className="mb-4 p-2 bg-red-500/20 border border-red-500/50 rounded-lg text-red-400 text-sm">
+                  {sessionError}
+                </div>
+              )}
+              <button
+                onClick={() => createSession(false)}
+                className="w-full py-3 bg-[#D4AF37] text-black rounded-lg font-bold"
+              >
+                🎮 Start Session
+              </button>
+              <p className="text-xs text-gray-500 mt-2">
+                Requires wallet signature (no gas fee)
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="flex justify-between items-center p-3 border-b border-[#D4AF37]/20">
         <div className="flex items-center gap-2">
@@ -924,7 +1379,7 @@ export default function MinerGame() {
         {activeTab === 'game' && (
           <>
             {/* Stats */}
-            <div className="grid grid-cols-4 gap-2 mb-4 p-3 bg-black/50 rounded-xl border border-white/10">
+            <div className="grid grid-cols-4 gap-2 mb-2 p-3 bg-black/50 rounded-xl border border-white/10">
               <div className="text-center">
                 <div className="text-lg font-bold text-[#D4AF37]">{formatNumber(gold)}</div>
                 <div className="text-[10px] text-gray-500">GOLD</div>
@@ -942,6 +1397,78 @@ export default function MinerGame() {
                 <div className="text-[10px] text-gray-500">COMBO</div>
               </div>
             </div>
+            
+            {/* Save Status & Button */}
+            {isConnected && (
+              <div className="mb-4">
+                {/* Save Reminder Popup */}
+                {showSaveReminder && (
+                  <div className="mb-2 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="text-yellow-400 text-sm">💾 Remember to save your progress!</span>
+                      <button
+                        onClick={() => {
+                          setShowSaveReminder(false);
+                          saveGameToServer(true);
+                        }}
+                        className="px-3 py-1 bg-yellow-500 text-black text-sm font-medium rounded"
+                      >
+                        Save Now
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Save Error */}
+                {saveError && (
+                  <div className="mb-2 p-2 bg-red-500/20 border border-red-500/50 rounded-lg text-center">
+                    <span className="text-red-400 text-xs">{saveError}</span>
+                  </div>
+                )}
+                
+                {/* Save Button */}
+                <div className="flex items-center justify-center gap-3">
+                  <button
+                    onClick={() => saveGameToServer(true)}
+                    disabled={isSaving}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
+                      isSaving 
+                        ? 'bg-gray-600 text-gray-400' 
+                        : 'bg-[#D4AF37]/20 border border-[#D4AF37]/50 text-[#D4AF37] hover:bg-[#D4AF37]/30'
+                    }`}
+                  >
+                    {isSaving ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        💾 Save Progress
+                      </>
+                    )}
+                  </button>
+                  
+                  {lastSaveTime.current > 0 && (
+                    <span className="text-[10px] text-gray-500">
+                      Last saved: {new Date(lastSaveTime.current).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
+                
+                <p className="text-[10px] text-gray-500 text-center mt-1">
+                  🔐 Saved securely to server (requires wallet signature)
+                </p>
+              </div>
+            )}
+            {!isConnected && (
+              <div className="mb-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-center">
+                <span className="text-yellow-500 text-sm flex items-center justify-center gap-2">
+                  ⚠️ Connect wallet to save progress
+                </span>
+                <p className="text-[10px] text-gray-500 mt-1">Your progress will be lost if you refresh</p>
+              </div>
+            )}
 
             {/* On-Chain Verified Bonuses */}
             {(verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || hasCrown || boostEndTime) && (
