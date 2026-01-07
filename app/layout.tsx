@@ -1,6 +1,6 @@
 // app/layout.tsx
 import type { Metadata } from 'next';
-import { Providers } from './providers';
+import Providers from './providers';
 import './globals.css';
 
 const URL = process.env.NEXT_PUBLIC_URL || 'https://your-app.vercel.app';
