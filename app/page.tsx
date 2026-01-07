@@ -376,6 +376,7 @@ export default function MinerGame() {
   const [floatingTexts, setFloatingTexts] = useState<Array<{id: number, text: string, x: number, y: number}>>([]);
   const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
   const [txError, setTxError] = useState<string | null>(null);
+  const [purchaseVerified, setPurchaseVerified] = useState(false);
   
   // Burn notifications
   const [burnNotifications, setBurnNotifications] = useState<Array<{ id: number; amount: string; buyer: string }>>([]);
@@ -699,6 +700,17 @@ export default function MinerGame() {
     return () => clearInterval(interval);
   }, [address, isConnected, gold]);
 
+  // Auto-save when a purchase is verified (bypass rate limit)
+  useEffect(() => {
+    if (purchaseVerified && address && sessionId) {
+      // Reset rate limit to allow immediate save
+      lastSaveTime.current = 0;
+      saveGameToServer();
+      setPurchaseVerified(false);
+      console.log('💾 Auto-saved after purchase verification');
+    }
+  }, [purchaseVerified, address, sessionId, saveGameToServer]);
+
   // Calculate verified bonuses
   const verifiedBonuses = useMemo(() => 
     calculateVerifiedBonuses(verifiedPurchases, currentTime), 
@@ -831,6 +843,7 @@ export default function MinerGame() {
               setVerificationSuccess(verifiedItem);
               setPendingVerification(null);
               setSelectedItem(null);
+              setPurchaseVerified(true); // Trigger auto-save
               
               setTimeout(() => setVerificationSuccess(null), 6000);
             }
@@ -1557,6 +1570,7 @@ export default function MinerGame() {
                   </div>
                 </div>
                 <div className="text-xs text-gray-400 mt-2">Transaction confirmed on Base</div>
+                <div className="text-xs text-green-400 mt-1">✓ Progress auto-saved</div>
               </div>
             )}
 
