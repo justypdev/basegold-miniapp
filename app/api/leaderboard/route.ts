@@ -43,6 +43,7 @@ interface LeaderboardEntry {
 interface SubmitRequest {
   address: string;
   signature: string;
+  message: string;
   name: string;
   gold: number;
   totalClicks: number;
@@ -109,7 +110,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body: SubmitRequest = await request.json();
-    const { address, signature, name, gold, totalClicks, timestamp, sessionId } = body;
+    const { address, signature, message, name, gold, totalClicks, timestamp, sessionId } = body;
 
     const normalizedAddress = address?.toLowerCase();
     if (!normalizedAddress || !/^0x[a-f0-9]{40}$/i.test(normalizedAddress)) {
@@ -145,16 +146,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Timestamp expired' }, { status: 400 });
     }
 
-    const expectedMessage = `BaseGold Leaderboard\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nTimestamp: ${timestamp}`;
+    // Validate message format (basic check)
+    if (!message || !message.includes('BaseGold Leaderboard') || !message.includes(address)) {
+      return NextResponse.json({ error: 'Invalid message format' }, { status: 400 });
+    }
     
     let isValidSignature = false;
     try {
       isValidSignature = await verifyMessage({
         address: address as `0x${string}`,
-        message: expectedMessage,
+        message: message,
         signature: signature as `0x${string}`,
       });
     } catch (e) {
+      console.error('Signature verification error:', e);
       return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
     }
 
