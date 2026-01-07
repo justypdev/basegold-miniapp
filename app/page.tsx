@@ -441,6 +441,9 @@ export default function MinerGame() {
   const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
   const [processingPurchase, setProcessingPurchase] = useState(false);
+  const [pendingPurchaseItem, setPendingPurchaseItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
+  const [lastPurchasedItem, setLastPurchasedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
+  const [lastAppliedBurnTime, setLastAppliedBurnTime] = useState(0);
   
   // Buy BG state
   const [buyAmount, setBuyAmount] = useState('');
@@ -471,7 +474,56 @@ export default function MinerGame() {
     return Object.values(premiumPurchases).reduce((sum, count) => sum + count, 0);
   }, [premiumPurchases]);
 
-  // Watch for InstantBurn events (real-time!)
+  // Direct apply purchase effect - can be called from anywhere
+  const applyPurchaseEffectDirect = useCallback((item: typeof SHOP_ITEMS[0]) => {
+    console.log('🎮 DIRECT: Applying purchase effect for:', item.id, item.name);
+    const effect = item.effect;
+    
+    // Track the purchase
+    setPremiumPurchases(prev => {
+      const updated = { ...prev, [item.id]: (prev[item.id] || 0) + 1 };
+      console.log('📦 Updated premium purchases:', updated);
+      // Force save to localStorage immediately
+      const saveData = {
+        gold,
+        baseGoldPerClick,
+        baseGoldPerSecond,
+        totalClicks,
+        premiumPurchases: updated,
+        upgrades,
+      };
+      localStorage.setItem('basegold-miner-v3', JSON.stringify(saveData));
+      console.log('💾 Saved to localStorage');
+      return updated;
+    });
+    
+    // Apply immediate effects
+    switch (effect.type) {
+      case 'boost':
+        setClickMultiplier(effect.multiplier || 2);
+        setBoostEndTime(Date.now() + (effect.duration || 600000));
+        break;
+      case 'instant_gold':
+        setGold(prev => prev + (goldPerSecond * 3600 * (effect.hours || 1)));
+        break;
+    }
+    
+    // Clear pending and show success
+    setPendingPurchaseItem(null);
+    setSelectedItem(null);
+    setProcessingPurchase(false);
+    setLastPurchasedItem(item);
+    setPurchaseSuccess(true);
+    setTimeout(() => {
+      setPurchaseSuccess(false);
+      setLastPurchasedItem(null);
+    }, 6000);
+    
+    // Refresh burn stats
+    setTimeout(() => fetchUserBurnStats(), 2000);
+  }, [gold, baseGoldPerClick, baseGoldPerSecond, totalClicks, upgrades, goldPerSecond, fetchUserBurnStats]);
+
+  // Watch for InstantBurn events (real-time!) - Also auto-detects user purchases
   useWatchContractEvent({
     address: INSTANT_BURN,
     abi: INSTANT_BURN_ABI,
@@ -479,11 +531,13 @@ export default function MinerGame() {
     onLogs(logs) {
       logs.forEach((log: any) => {
         const bgBurned = formatUnits(log.args.bgBurned || 0n, 18);
-        const buyer = log.args.buyer?.slice(0, 6) + '...' + log.args.buyer?.slice(-4);
+        const buyerAddress = log.args.buyer as string;
+        const buyerShort = buyerAddress?.slice(0, 6) + '...' + buyerAddress?.slice(-4);
+        const timestamp = Number(log.args.timestamp || 0) * 1000;
         
-        // Add notification
+        // Add notification for everyone
         const id = Date.now();
-        setBurnNotifications(prev => [...prev, { id, amount: parseFloat(bgBurned).toFixed(6), buyer }]);
+        setBurnNotifications(prev => [...prev, { id, amount: parseFloat(bgBurned).toFixed(6), buyer: buyerShort }]);
         
         // Update stats
         setLastBurnAmount(bgBurned);
@@ -492,6 +546,18 @@ export default function MinerGame() {
         
         // Refresh burn leaderboard
         fetchBurnLeaderboard();
+        
+        // AUTO-DETECT: If this burn is from current user and we have a pending purchase
+        if (address && buyerAddress.toLowerCase() === address.toLowerCase()) {
+          console.log('🎯 Detected YOUR burn event!', { bgBurned, timestamp });
+          
+          // Check if we have a pending purchase and haven't already applied it
+          if (pendingPurchaseItem && timestamp > lastAppliedBurnTime) {
+            console.log('🎁 Auto-applying pending purchase:', pendingPurchaseItem.id);
+            applyPurchaseEffectDirect(pendingPurchaseItem);
+            setLastAppliedBurnTime(timestamp);
+          }
+        }
       });
     },
   });
@@ -867,58 +933,6 @@ export default function MinerGame() {
     }
   };
 
-  // Apply purchase effect - called when transaction succeeds
-  const applyPurchaseEffect = useCallback((item: typeof SHOP_ITEMS[0]) => {
-    console.log('🎮 Applying purchase effect for:', item.id, item.name);
-    const effect = item.effect;
-    
-    // Always track the purchase first
-    setPremiumPurchases(prev => {
-      const updated = {
-        ...prev,
-        [item.id]: (prev[item.id] || 0) + 1
-      };
-      console.log('📦 Updated premium purchases:', updated);
-      return updated;
-    });
-    
-    // Apply immediate effects (non-permanent ones)
-    switch (effect.type) {
-      case 'boost':
-        console.log('⚡ Applying boost:', effect.multiplier, 'for', effect.duration, 'ms');
-        setClickMultiplier(effect.multiplier || 2);
-        setBoostEndTime(Date.now() + (effect.duration || 600000));
-        break;
-      case 'instant_gold':
-        const instantGold = goldPerSecond * 3600 * (effect.hours || 1);
-        console.log('💰 Adding instant gold:', instantGold);
-        setGold(prev => prev + instantGold);
-        break;
-      // permanent_click, permanent_passive, and cosmetic are handled via premiumBonuses calculation
-      case 'permanent_click':
-        console.log('💎 Permanent click bonus will be applied via premium bonuses');
-        break;
-      case 'permanent_passive':
-        console.log('🤖 Permanent passive bonus will be applied via premium bonuses');
-        break;
-      case 'cosmetic':
-        console.log('👑 Crown unlocked via premium bonuses');
-        break;
-      case 'burn_contribution':
-        console.log('🔥 Burn contribution recorded');
-        break;
-    }
-    
-    // Refresh burn stats
-    setTimeout(() => fetchUserBurnStats(), 3000);
-    
-    // Close the selected item and show success
-    setSelectedItem(null);
-    setProcessingPurchase(false);
-    setPurchaseSuccess(true);
-    setTimeout(() => setPurchaseSuccess(false), 4000);
-  }, [goldPerSecond, fetchUserBurnStats]);
-
   const formatNumber = (num: number) => {
     if (num >= 1e9) return (num / 1e9).toFixed(1) + 'B';
     if (num >= 1e6) return (num / 1e6).toFixed(1) + 'M';
@@ -1184,12 +1198,37 @@ export default function MinerGame() {
             </div>
 
             {/* Premium Bonuses Display */}
-            {(premiumBonuses.bonusClick > 0 || premiumBonuses.bonusPassive > 0) && (
-              <div className="mb-4 p-2 bg-purple-500/10 border border-purple-500/30 rounded-lg">
-                <div className="text-xs text-purple-400 text-center">
-                  💎 Premium Bonuses: 
-                  {premiumBonuses.bonusClick > 0 && ` +${premiumBonuses.bonusClick}/click`}
-                  {premiumBonuses.bonusPassive > 0 && ` +${premiumBonuses.bonusPassive}/sec`}
+            {(premiumBonuses.bonusClick > 0 || premiumBonuses.bonusPassive > 0 || premiumBonuses.hasCrown) && (
+              <div className="mb-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                <div className="text-xs text-purple-300 font-medium mb-2 text-center">💎 Premium Upgrades Active</div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {premiumBonuses.bonusClick > 0 && (
+                    <div className="bg-purple-500/20 rounded p-2 text-center">
+                      <div className="text-purple-400 font-bold">+{premiumBonuses.bonusClick}</div>
+                      <div className="text-purple-300">per click</div>
+                    </div>
+                  )}
+                  {premiumBonuses.bonusPassive > 0 && (
+                    <div className="bg-purple-500/20 rounded p-2 text-center">
+                      <div className="text-purple-400 font-bold">+{premiumBonuses.bonusPassive}</div>
+                      <div className="text-purple-300">per second</div>
+                    </div>
+                  )}
+                  {premiumBonuses.hasCrown && (
+                    <div className="bg-yellow-500/20 rounded p-2 text-center col-span-2">
+                      <div className="text-yellow-400 font-bold">👑 Crown Active</div>
+                      <div className="text-yellow-300">Max combo: {premiumBonuses.maxCombo}x</div>
+                    </div>
+                  )}
+                </div>
+                {/* Show owned premium items */}
+                <div className="mt-2 pt-2 border-t border-purple-500/20 text-center">
+                  <div className="text-[10px] text-gray-400">
+                    Owned: {Object.entries(premiumPurchases).filter(([_, v]) => v > 0).map(([id, count]) => {
+                      const item = SHOP_ITEMS.find(i => i.id === id);
+                      return item ? `${item.emoji}x${count}` : null;
+                    }).filter(Boolean).join(' • ') || 'None'}
+                  </div>
                 </div>
               </div>
             )}
@@ -1291,11 +1330,22 @@ export default function MinerGame() {
               </div>
             )}
 
-            {purchaseSuccess && (
-              <div className="mb-4 p-4 bg-green-500/20 border-2 border-green-500 rounded-xl text-center animate-pulse">
-                <div className="text-2xl mb-1">🎉</div>
-                <span className="text-green-400 font-bold">Purchase Complete!</span>
-                <div className="text-green-300 text-sm">Effect applied & BG burned! 🔥</div>
+            {purchaseSuccess && lastPurchasedItem && (
+              <div className="mb-4 p-4 bg-green-500/20 border-2 border-green-500 rounded-xl text-center">
+                <div className="text-3xl mb-2">🎉</div>
+                <div className="text-green-400 font-bold text-lg">Purchase Complete!</div>
+                <div className="mt-2 p-2 bg-black/30 rounded-lg">
+                  <div className="text-white font-medium">{lastPurchasedItem.emoji} {lastPurchasedItem.name}</div>
+                  <div className="text-green-300 text-sm mt-1">
+                    {lastPurchasedItem.effect.type === 'permanent_click' && `✅ +${lastPurchasedItem.effect.amount} gold per click!`}
+                    {lastPurchasedItem.effect.type === 'permanent_passive' && `✅ +${lastPurchasedItem.effect.amount} gold per second!`}
+                    {lastPurchasedItem.effect.type === 'boost' && `✅ ${lastPurchasedItem.effect.multiplier}x boost active!`}
+                    {lastPurchasedItem.effect.type === 'instant_gold' && `✅ +${lastPurchasedItem.effect.hours} hour(s) of gold!`}
+                    {lastPurchasedItem.effect.type === 'cosmetic' && `✅ Crown unlocked! Max combo: ${lastPurchasedItem.effect.maxCombo}x`}
+                    {lastPurchasedItem.effect.type === 'burn_contribution' && `✅ BG burned! Thank you!`}
+                  </div>
+                </div>
+                <div className="text-orange-400 text-xs mt-2">🔥 BG tokens burned forever!</div>
               </div>
             )}
 
@@ -1340,22 +1390,25 @@ export default function MinerGame() {
                     </button>
                     
                     {selectedItem?.id === item.id && isConnected && (
-                      <div className="mt-2 p-2 bg-black/50 rounded-lg">
+                      <div className="mt-2 p-2 bg-black/50 rounded-lg space-y-2">
                         <Transaction
                           chainId={base.id}
                           calls={buildPurchaseCalls(item.priceETH)}
                           onSuccess={() => {
                             console.log('✅ onSuccess fired for:', item.id);
-                            applyPurchaseEffect(item);
+                            applyPurchaseEffectDirect(item);
                           }}
                           onError={(error) => {
                             console.log('❌ onError fired:', error);
                             setProcessingPurchase(false);
+                            setPendingPurchaseItem(null);
                           }}
                           onStatus={(status) => {
                             console.log('📝 onStatus:', status.statusName);
-                            if (status.statusName === 'transactionPending') {
+                            if (status.statusName === 'transactionPending' || status.statusName === 'buildingTransaction') {
                               setProcessingPurchase(true);
+                              setPendingPurchaseItem(item);
+                              console.log('⏳ Set pending purchase:', item.id);
                             }
                           }}
                         >
@@ -1368,6 +1421,19 @@ export default function MinerGame() {
                             <TransactionStatusAction />
                           </TransactionStatus>
                         </Transaction>
+                        
+                        {/* Manual claim button - backup if auto-detect fails */}
+                        {processingPurchase && (
+                          <button
+                            onClick={() => {
+                              console.log('🔧 Manual claim triggered for:', item.id);
+                              applyPurchaseEffectDirect(item);
+                            }}
+                            className="w-full py-2 rounded-lg font-medium bg-green-600 hover:bg-green-500 text-white text-sm"
+                          >
+                            ✅ Transaction Complete? Click to Claim Reward
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
