@@ -13,7 +13,7 @@ import {
 import { ConnectWallet, Wallet, WalletDropdown, WalletDropdownFundLink } from '@coinbase/onchainkit/wallet';
 import { FundButton } from '@coinbase/onchainkit/fund';
 import { Avatar, Name } from '@coinbase/onchainkit/identity';
-import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, keccak256, toBytes } from 'viem';
+import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem } from 'viem';
 import { base } from 'wagmi/chains';
 
 // ============ CONTRACT ADDRESSES (Base Mainnet) ============
@@ -28,19 +28,14 @@ const INITIAL_SUPPLY = 10000;
 
 // ============ SECURITY CONSTANTS ============
 
-const MAX_CLICKS_PER_SECOND = 20; // Human limit ~15-20 CPS
-const SESSION_VALIDATION_WINDOW = 1000; // 1 second window for click validation
-const MIN_BURNS_FOR_LEADERBOARD = 1; // Minimum burns required to submit score
+const MAX_CLICKS_PER_SECOND = 20;
+const MIN_BURNS_FOR_LEADERBOARD = 1;
+const VERIFICATION_POLL_INTERVAL = 2000; // Poll every 2 seconds
+const VERIFICATION_MAX_ATTEMPTS = 30; // Max 60 seconds of polling
 
 // ============ ABIs ============
 
 const ERC20_ABI = [
-  {
-    name: 'approve',
-    type: 'function',
-    inputs: [{ name: 'spender', type: 'address' }, { name: 'amount', type: 'uint256' }],
-    outputs: [{ type: 'bool' }],
-  },
   {
     name: 'balanceOf',
     type: 'function',
@@ -89,23 +84,8 @@ const INSTANT_BURN_ABI = [
   },
 ] as const;
 
-const ROUTER_ABI = [
-  {
-    name: 'swapExactETHForTokens',
-    type: 'function',
-    inputs: [
-      { name: 'amountOutMin', type: 'uint256' },
-      { name: 'path', type: 'address[]' },
-      { name: 'to', type: 'address' },
-      { name: 'deadline', type: 'uint256' }
-    ],
-    outputs: [{ type: 'uint256[]' }],
-    stateMutability: 'payable',
-  },
-] as const;
-
 // ============ SHOP ITEMS (ETH prices) ============
-// These map to on-chain burn events - effect is calculated from ETH spent
+// Effects are ONLY applied after on-chain verification
 
 const SHOP_ITEMS = [
   {
@@ -164,12 +144,6 @@ const SHOP_ITEMS = [
   },
 ];
 
-// Map ETH amounts to shop items for on-chain verification
-const ETH_TO_ITEM: Record<string, typeof SHOP_ITEMS[0]> = {};
-SHOP_ITEMS.forEach(item => {
-  ETH_TO_ITEM[item.priceETH] = item;
-});
-
 // ============ UPGRADES ============
 
 const INITIAL_UPGRADES = {
@@ -189,6 +163,14 @@ interface BurnEntry {
   burnCount: number;
 }
 
+interface OnChainPurchase {
+  itemId: string;
+  ethAmount: string;
+  bgBurned: number;
+  timestamp: number;
+  txHash: string;
+}
+
 interface VerifiedPointsEntry {
   address: string;
   name: string;
@@ -201,26 +183,32 @@ interface VerifiedPointsEntry {
   sessionDuration: number;
 }
 
-interface OnChainPurchase {
-  itemId: string;
-  ethAmount: string;
-  bgBurned: number;
-  timestamp: number;
-  txHash: string;
+// ============ HELPER: Match ETH amount to shop item ============
+
+function matchEthToItem(ethAmount: string): typeof SHOP_ITEMS[0] | null {
+  const eth = parseFloat(ethAmount);
+  for (const item of SHOP_ITEMS) {
+    const itemEth = parseFloat(item.priceETH);
+    // Allow 5% tolerance for gas variations
+    if (Math.abs(eth - itemEth) / itemEth < 0.05) {
+      return item;
+    }
+  }
+  return null;
 }
 
-// ============ HELPER FUNCTIONS ============
+// ============ HELPER: Calculate bonuses from verified purchases ============
 
-// Calculate premium bonuses from VERIFIED on-chain purchases
-function calculateVerifiedBonuses(purchases: OnChainPurchase[]) {
+function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: number) {
   let bonusClick = 0;
   let bonusPassive = 0;
   let hasCrown = false;
   let maxCombo = 10;
-  let activeBoosts: { multiplier: number; endTime: number }[] = [];
+  let activeBoost: { multiplier: number; endTime: number; remaining: number } | null = null;
+  let instantGoldPending = 0;
 
   purchases.forEach(purchase => {
-    const item = ETH_TO_ITEM[purchase.ethAmount];
+    const item = matchEthToItem(purchase.ethAmount);
     if (!item) return;
 
     switch (item.effect.type) {
@@ -235,55 +223,27 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[]) {
         maxCombo = item.effect.maxCombo || 15;
         break;
       case 'boost':
-        // Boosts are time-limited - check if still active
         const boostEndTime = purchase.timestamp + (item.effect.duration || 600000);
-        if (boostEndTime > Date.now()) {
-          activeBoosts.push({ multiplier: item.effect.multiplier || 2, endTime: boostEndTime });
+        const remaining = boostEndTime - currentTime;
+        if (remaining > 0) {
+          // Keep the boost with most time remaining
+          if (!activeBoost || remaining > activeBoost.remaining) {
+            activeBoost = { 
+              multiplier: item.effect.multiplier || 2, 
+              endTime: boostEndTime,
+              remaining 
+            };
+          }
         }
+        break;
+      case 'instant_gold':
+        // Track for display, actual gold added when verified
+        instantGoldPending++;
         break;
     }
   });
 
-  // Get highest active boost multiplier
-  const activeBoost = activeBoosts.length > 0 
-    ? activeBoosts.reduce((max, b) => b.multiplier > max.multiplier ? b : max)
-    : null;
-
-  return { bonusClick, bonusPassive, hasCrown, maxCombo, activeBoost };
-}
-
-// Validate score is achievable
-function validateScore(
-  gold: number, 
-  totalClicks: number, 
-  sessionDuration: number,
-  verifiedBonuses: ReturnType<typeof calculateVerifiedBonuses>,
-  baseGoldPerClick: number,
-  baseGoldPerSecond: number
-): { valid: boolean; reason?: string } {
-  // Check click rate isn't superhuman
-  const clicksPerSecond = totalClicks / (sessionDuration / 1000);
-  if (clicksPerSecond > MAX_CLICKS_PER_SECOND) {
-    return { valid: false, reason: `Click rate too high: ${clicksPerSecond.toFixed(1)} CPS (max: ${MAX_CLICKS_PER_SECOND})` };
-  }
-
-  // Calculate maximum possible gold
-  const maxGoldPerClick = (baseGoldPerClick + verifiedBonuses.bonusClick) * (verifiedBonuses.activeBoost?.multiplier || 1) * 15; // 15x max combo
-  const maxFromClicks = totalClicks * maxGoldPerClick;
-  const maxFromPassive = (baseGoldPerSecond + verifiedBonuses.bonusPassive) * (sessionDuration / 1000);
-  const maxPossibleGold = maxFromClicks + maxFromPassive;
-
-  if (gold > maxPossibleGold * 1.1) { // 10% tolerance for rounding
-    return { valid: false, reason: `Gold exceeds maximum possible: ${gold} > ${maxPossibleGold.toFixed(0)}` };
-  }
-
-  return { valid: true };
-}
-
-// Create score hash for signing
-function createScoreHash(address: string, gold: number, totalClicks: number, burnCount: number, timestamp: number): string {
-  const message = `BaseGold Score Submission\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nBurns: ${burnCount}\nTimestamp: ${timestamp}`;
-  return message;
+  return { bonusClick, bonusPassive, hasCrown, maxCombo, activeBoost, instantGoldPending };
 }
 
 // ============ COMPONENTS ============
@@ -310,13 +270,24 @@ function BurnNotification({ burn, onComplete }: { burn: { amount: string; buyer:
   );
 }
 
+function VerificationStatus({ status, item }: { status: string; item: typeof SHOP_ITEMS[0] }) {
+  return (
+    <div className="p-4 bg-blue-500/20 border border-blue-500 rounded-xl">
+      <div className="flex items-center gap-3">
+        <div className="w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+        <div>
+          <div className="text-blue-400 font-medium">{status}</div>
+          <div className="text-xs text-gray-400">{item.emoji} {item.name}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ============ MAIN COMPONENT ============
 
 export default function MinerGame() {
   const [isReady, setIsReady] = useState(false);
-  const [dataLoaded, setDataLoaded] = useState(false);
-  
-  // Session tracking for anti-cheat
   const sessionStartTime = useRef(Date.now());
   const clickTimestamps = useRef<number[]>([]);
   
@@ -334,13 +305,6 @@ export default function MinerGame() {
     functionName: 'totalSupply',
   });
 
-  const { data: contractBalance } = useReadContract({
-    address: BG_TOKEN,
-    abi: ERC20_ABI,
-    functionName: 'balanceOf',
-    args: [BG_TOKEN],
-  });
-
   const { data: deadBalance } = useReadContract({
     address: BG_TOKEN,
     abi: ERC20_ABI,
@@ -355,30 +319,36 @@ export default function MinerGame() {
   });
 
   // ============ ON-CHAIN VERIFIED STATE ============
-  // These are loaded from blockchain and CANNOT be manipulated
   
   const [verifiedPurchases, setVerifiedPurchases] = useState<OnChainPurchase[]>([]);
   const [userBurnCount, setUserBurnCount] = useState(0);
   const [userBurnAmount, setUserBurnAmount] = useState(0);
   const [loadingVerification, setLoadingVerification] = useState(true);
+  
+  // Purchase verification state
+  const [pendingVerification, setPendingVerification] = useState<{
+    item: typeof SHOP_ITEMS[0];
+    startTime: number;
+    initialBurnCount: number;
+    status: string;
+  } | null>(null);
+  const [verificationSuccess, setVerificationSuccess] = useState<typeof SHOP_ITEMS[0] | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
 
-  // ============ SESSION STATE (resets on refresh) ============
-  // These are ephemeral and don't persist - prevents localStorage manipulation
+  // ============ SESSION STATE ============
   
   const [gold, setGold] = useState(0);
   const [totalClicks, setTotalClicks] = useState(0);
   const [combo, setCombo] = useState(1);
   const [lastClickTime, setLastClickTime] = useState(0);
   const [upgrades, setUpgrades] = useState(INITIAL_UPGRADES);
+  const [appliedInstantGold, setAppliedInstantGold] = useState<Set<string>>(new Set());
+  const [currentTime, setCurrentTime] = useState(Date.now());
   
   // UI state
   const [activeTab, setActiveTab] = useState<'game' | 'shop' | 'buy' | 'leaderboard' | 'stats'>('game');
   const [floatingTexts, setFloatingTexts] = useState<Array<{id: number, text: string, x: number, y: number}>>([]);
   const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
-  const [purchaseSuccess, setPurchaseSuccess] = useState(false);
-  const [processingPurchase, setProcessingPurchase] = useState(false);
-  const [pendingPurchaseItem, setPendingPurchaseItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
-  const [lastPurchasedItem, setLastPurchasedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
   
   // Burn notifications
   const [burnNotifications, setBurnNotifications] = useState<Array<{ id: number; amount: string; buyer: string }>>([]);
@@ -393,10 +363,19 @@ export default function MinerGame() {
   const [submittingScore, setSubmittingScore] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  // Calculate verified bonuses from on-chain data
-  const verifiedBonuses = useMemo(() => calculateVerifiedBonuses(verifiedPurchases), [verifiedPurchases]);
+  // Update current time for boost calculations
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Calculate verified bonuses
+  const verifiedBonuses = useMemo(() => 
+    calculateVerifiedBonuses(verifiedPurchases, currentTime), 
+    [verifiedPurchases, currentTime]
+  );
   
-  // Calculate base stats from in-game upgrades
+  // Calculate base stats from upgrades
   const baseGoldPerClick = useMemo(() => {
     return 1 + Object.values(upgrades).reduce((sum, u) => sum + u.owned * u.perClick, 0);
   }, [upgrades]);
@@ -405,23 +384,23 @@ export default function MinerGame() {
     return Object.values(upgrades).reduce((sum, u) => sum + u.owned * u.perSec, 0);
   }, [upgrades]);
   
-  // Final calculated values including verified bonuses
+  // Final values from on-chain data
   const goldPerClick = baseGoldPerClick + verifiedBonuses.bonusClick;
   const goldPerSecond = baseGoldPerSecond + verifiedBonuses.bonusPassive;
   const clickMultiplier = verifiedBonuses.activeBoost?.multiplier || 1;
   const boostEndTime = verifiedBonuses.activeBoost?.endTime || null;
+  const boostRemaining = verifiedBonuses.activeBoost?.remaining || 0;
   const hasCrown = verifiedBonuses.hasCrown;
   const maxCombo = verifiedBonuses.maxCombo;
 
-  // ============ FETCH VERIFIED ON-CHAIN DATA ============
+  // ============ FETCH ON-CHAIN PURCHASES ============
   
-  const fetchVerifiedPurchases = useCallback(async () => {
+  const fetchVerifiedPurchases = useCallback(async (): Promise<OnChainPurchase[]> => {
     if (!publicClient || !address) {
       setLoadingVerification(false);
-      return;
+      return [];
     }
     
-    setLoadingVerification(true);
     try {
       const logs = await publicClient.getLogs({
         address: INSTANT_BURN,
@@ -438,23 +417,18 @@ export default function MinerGame() {
         const ethAmount = formatUnits(log.args.ethAmount || 0n, 18);
         const bgBurned = Number(formatUnits(log.args.bgBurned || 0n, 18));
         const timestamp = Number(log.args.timestamp || 0) * 1000;
+        const txHash = log.transactionHash;
         
         totalBurned += bgBurned;
 
-        // Find matching shop item by ETH amount
-        const matchingItem = SHOP_ITEMS.find(item => {
-          const itemEth = parseFloat(item.priceETH);
-          const txEth = parseFloat(ethAmount);
-          return Math.abs(itemEth - txEth) < 0.00001; // Small tolerance for rounding
-        });
-
+        const matchingItem = matchEthToItem(ethAmount);
         if (matchingItem) {
           purchases.push({
             itemId: matchingItem.id,
-            ethAmount: matchingItem.priceETH,
+            ethAmount,
             bgBurned,
             timestamp,
-            txHash: log.transactionHash,
+            txHash,
           });
         }
       });
@@ -462,21 +436,86 @@ export default function MinerGame() {
       setVerifiedPurchases(purchases);
       setUserBurnCount(logs.length);
       setUserBurnAmount(totalBurned);
+      setLoadingVerification(false);
       
-      console.log('✅ Verified on-chain purchases:', purchases.length);
-      console.log('🔥 Total burns:', logs.length, 'Amount:', totalBurned.toFixed(6));
+      return purchases;
     } catch (error) {
       console.error('Error fetching verified purchases:', error);
+      setLoadingVerification(false);
+      return [];
     }
-    setLoadingVerification(false);
   }, [publicClient, address]);
 
-  // Fetch on mount and when address changes
+  // Initial fetch
   useEffect(() => {
     fetchVerifiedPurchases();
   }, [fetchVerifiedPurchases]);
 
-  // Watch for new burn events
+  // ============ PURCHASE VERIFICATION POLLING ============
+  
+  useEffect(() => {
+    if (!pendingVerification || !publicClient || !address) return;
+
+    let attempts = 0;
+    const pollInterval = setInterval(async () => {
+      attempts++;
+      
+      if (attempts > VERIFICATION_MAX_ATTEMPTS) {
+        clearInterval(pollInterval);
+        setVerificationError('Verification timed out. Please check your transaction on BaseScan.');
+        setPendingVerification(null);
+        return;
+      }
+
+      setPendingVerification(prev => prev ? {
+        ...prev,
+        status: `Verifying on blockchain... (${attempts}/${VERIFICATION_MAX_ATTEMPTS})`
+      } : null);
+
+      try {
+        const purchases = await fetchVerifiedPurchases();
+        
+        // Check if we have more burns than before
+        if (purchases.length > pendingVerification.initialBurnCount) {
+          // Find the new purchase
+          const newPurchase = purchases.find(p => 
+            p.timestamp > pendingVerification.startTime - 60000 // Within last minute
+          );
+
+          if (newPurchase) {
+            const verifiedItem = matchEthToItem(newPurchase.ethAmount);
+            
+            if (verifiedItem && verifiedItem.id === pendingVerification.item.id) {
+              // SUCCESS! Purchase verified on-chain
+              clearInterval(pollInterval);
+              
+              console.log('✅ Purchase verified on-chain:', verifiedItem.id, 'txHash:', newPurchase.txHash);
+              
+              // Apply instant gold if applicable
+              if (verifiedItem.effect.type === 'instant_gold' && !appliedInstantGold.has(newPurchase.txHash)) {
+                const instantGold = goldPerSecond * 3600 * (verifiedItem.effect.hours || 1);
+                setGold(prev => prev + instantGold);
+                setAppliedInstantGold(prev => new Set([...prev, newPurchase.txHash]));
+              }
+              
+              setVerificationSuccess(verifiedItem);
+              setPendingVerification(null);
+              setSelectedItem(null);
+              
+              setTimeout(() => setVerificationSuccess(null), 6000);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Verification poll error:', error);
+      }
+    }, VERIFICATION_POLL_INTERVAL);
+
+    return () => clearInterval(pollInterval);
+  }, [pendingVerification, publicClient, address, fetchVerifiedPurchases, goldPerSecond, appliedInstantGold]);
+
+  // ============ WATCH BURN EVENTS ============
+
   useWatchContractEvent({
     address: INSTANT_BURN,
     abi: INSTANT_BURN_ABI,
@@ -487,32 +526,11 @@ export default function MinerGame() {
         const buyerAddress = log.args.buyer as string;
         const buyerShort = buyerAddress?.slice(0, 6) + '...' + buyerAddress?.slice(-4);
         
-        // Add notification
         const id = Date.now();
         setBurnNotifications(prev => [...prev, { id, amount: parseFloat(bgBurned).toFixed(6), buyer: buyerShort }]);
         
-        // Refresh stats
         refetchSupply();
         refetchBurnStats();
-        
-        // If this is the current user, refresh their verified purchases
-        if (address && buyerAddress.toLowerCase() === address.toLowerCase()) {
-          console.log('🎯 Your burn detected! Refreshing verified data...');
-          fetchVerifiedPurchases();
-          
-          // Handle pending purchase
-          if (pendingPurchaseItem) {
-            setLastPurchasedItem(pendingPurchaseItem);
-            setPurchaseSuccess(true);
-            setPendingPurchaseItem(null);
-            setSelectedItem(null);
-            setProcessingPurchase(false);
-            setTimeout(() => {
-              setPurchaseSuccess(false);
-              setLastPurchasedItem(null);
-            }, 6000);
-          }
-        }
       });
     },
   });
@@ -545,11 +563,7 @@ export default function MinerGame() {
       });
 
       const leaderboard: BurnEntry[] = Object.entries(burnsByAddress)
-        .map(([address, data]) => ({
-          address,
-          totalBurned: data.totalBurned,
-          burnCount: data.burnCount,
-        }))
+        .map(([address, data]) => ({ address, ...data }))
         .sort((a, b) => b.totalBurned - a.totalBurned)
         .slice(0, 50);
 
@@ -560,18 +574,15 @@ export default function MinerGame() {
     setLoadingLeaderboard(false);
   }, [publicClient]);
 
-  // Load points leaderboard from localStorage (but entries are verified)
   const loadPointsLeaderboard = useCallback(() => {
     try {
-      const saved = localStorage.getItem('basegold-verified-leaderboard-v1');
+      const saved = localStorage.getItem('basegold-verified-leaderboard-v2');
       if (saved) {
         const data = JSON.parse(saved) as VerifiedPointsEntry[];
-        // Sort by gold and filter out expired entries (older than 30 days)
-        const validEntries = data
+        setPointsLeaderboard(data
           .filter(e => Date.now() - e.timestamp < 30 * 24 * 60 * 60 * 1000)
           .sort((a, b) => b.gold - a.gold)
-          .slice(0, 50);
-        setPointsLeaderboard(validEntries);
+          .slice(0, 50));
       }
     } catch {}
   }, []);
@@ -590,18 +601,8 @@ export default function MinerGame() {
     
     setSubmitError(null);
     
-    // Check minimum burn requirement
     if (userBurnCount < MIN_BURNS_FOR_LEADERBOARD) {
-      setSubmitError(`Must have at least ${MIN_BURNS_FOR_LEADERBOARD} burn(s) to submit. You have: ${userBurnCount}`);
-      return;
-    }
-
-    // Validate score
-    const sessionDuration = Date.now() - sessionStartTime.current;
-    const validation = validateScore(gold, totalClicks, sessionDuration, verifiedBonuses, baseGoldPerClick, baseGoldPerSecond);
-    
-    if (!validation.valid) {
-      setSubmitError(`Score validation failed: ${validation.reason}`);
+      setSubmitError(`Must have at least ${MIN_BURNS_FOR_LEADERBOARD} verified burn(s). You have: ${userBurnCount}`);
       return;
     }
 
@@ -609,9 +610,8 @@ export default function MinerGame() {
     
     try {
       const timestamp = Date.now();
-      const message = createScoreHash(address, gold, totalClicks, userBurnCount, timestamp);
+      const message = `BaseGold Score Submission\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nBurns: ${userBurnCount}\nTimestamp: ${timestamp}`;
       
-      // Sign the score with wallet
       const signature = await signMessageAsync({ message });
       
       const name = playerName.trim() || address.slice(0, 6) + '...' + address.slice(-4);
@@ -625,18 +625,15 @@ export default function MinerGame() {
         totalBurned: userBurnAmount,
         signature,
         timestamp,
-        sessionDuration,
+        sessionDuration: Date.now() - sessionStartTime.current,
       };
 
-      // Load existing leaderboard
-      const saved = localStorage.getItem('basegold-verified-leaderboard-v1');
+      const saved = localStorage.getItem('basegold-verified-leaderboard-v2');
       let leaderboard: VerifiedPointsEntry[] = saved ? JSON.parse(saved) : [];
       
-      // Find existing entry for this address
       const existingIndex = leaderboard.findIndex(e => e.address.toLowerCase() === address.toLowerCase());
       
       if (existingIndex >= 0) {
-        // Only update if new score is higher
         if (gold > leaderboard[existingIndex].gold) {
           leaderboard[existingIndex] = newEntry;
         }
@@ -644,13 +641,12 @@ export default function MinerGame() {
         leaderboard.push(newEntry);
       }
       
-      // Sort and limit
       leaderboard = leaderboard
         .filter(e => Date.now() - e.timestamp < 30 * 24 * 60 * 60 * 1000)
         .sort((a, b) => b.gold - a.gold)
         .slice(0, 100);
       
-      localStorage.setItem('basegold-verified-leaderboard-v1', JSON.stringify(leaderboard));
+      localStorage.setItem('basegold-verified-leaderboard-v2', JSON.stringify(leaderboard));
       setPointsLeaderboard(leaderboard.slice(0, 50));
       
       alert('✅ Score submitted and verified! 🏆');
@@ -660,34 +656,26 @@ export default function MinerGame() {
     }
     
     setSubmittingScore(false);
-  }, [address, signMessageAsync, gold, totalClicks, userBurnCount, userBurnAmount, playerName, verifiedBonuses, baseGoldPerClick, baseGoldPerSecond]);
+  }, [address, signMessageAsync, gold, totalClicks, userBurnCount, userBurnAmount, playerName]);
 
   // ============ GAME LOGIC ============
 
-  // Initialize
   useEffect(() => {
     const init = async () => {
-      try {
-        await sdk.actions.ready();
-      } catch {}
+      try { await sdk.actions.ready(); } catch {}
       setIsReady(true);
-      setDataLoaded(true);
       sessionStartTime.current = Date.now();
     };
     init();
   }, []);
 
-  // Load player name
   useEffect(() => {
     const savedName = localStorage.getItem('basegold-player-name');
     if (savedName) setPlayerName(savedName);
   }, []);
 
-  // Save player name
   useEffect(() => {
-    if (playerName) {
-      localStorage.setItem('basegold-player-name', playerName);
-    }
+    if (playerName) localStorage.setItem('basegold-player-name', playerName);
   }, [playerName]);
 
   // Passive income
@@ -702,34 +690,28 @@ export default function MinerGame() {
   useEffect(() => {
     if (totalSupply) {
       const supply = Number(formatUnits(totalSupply as bigint, 18));
-      const stuck = contractBalance ? Number(formatUnits(contractBalance as bigint, 18)) : 0;
       const dead = deadBalance ? Number(formatUnits(deadBalance as bigint, 18)) : 0;
-      const burned = INITIAL_SUPPLY - supply + stuck + dead;
+      const burned = INITIAL_SUPPLY - supply + dead;
       setTotalBurned(burned);
     }
-  }, [totalSupply, contractBalance, deadBalance]);
+  }, [totalSupply, deadBalance]);
 
-  // Refresh data periodically
+  // Refresh data
   useEffect(() => {
     const interval = setInterval(() => {
       refetchSupply();
       refetchBurnStats();
+      fetchVerifiedPurchases();
     }, 15000);
     return () => clearInterval(interval);
-  }, [refetchSupply, refetchBurnStats]);
+  }, [refetchSupply, refetchBurnStats, fetchVerifiedPurchases]);
 
-  // Anti-cheat click handler with rate limiting
+  // Click handler with rate limiting
   const handleClick = useCallback((e: React.MouseEvent) => {
     const now = Date.now();
     
-    // Rate limiting - check clicks in last second
-    clickTimestamps.current = clickTimestamps.current.filter(t => now - t < SESSION_VALIDATION_WINDOW);
-    
-    if (clickTimestamps.current.length >= MAX_CLICKS_PER_SECOND) {
-      console.warn('⚠️ Click rate limited');
-      return; // Ignore click if rate exceeded
-    }
-    
+    clickTimestamps.current = clickTimestamps.current.filter(t => now - t < 1000);
+    if (clickTimestamps.current.length >= MAX_CLICKS_PER_SECOND) return;
     clickTimestamps.current.push(now);
     
     const rect = e.currentTarget.getBoundingClientRect();
@@ -749,7 +731,6 @@ export default function MinerGame() {
     setTimeout(() => setFloatingTexts(prev => prev.filter(ft => ft.id !== id)), 1000);
   }, [combo, lastClickTime, goldPerClick, clickMultiplier, maxCombo]);
 
-  // Buy upgrade
   const buyUpgrade = (key: keyof typeof upgrades) => {
     const upgrade = upgrades[key];
     if (gold >= upgrade.cost) {
@@ -768,44 +749,41 @@ export default function MinerGame() {
     return Math.floor(num).toString();
   };
 
-  // Build purchase transaction
-  const buildPurchaseCalls = (priceETH: string) => {
-    const value = parseEther(priceETH);
-    return [
-      {
-        to: INSTANT_BURN,
-        value: value,
-        data: encodeFunctionData({
-          abi: INSTANT_BURN_ABI,
-          functionName: 'buyAndBurn',
-          args: [],
-        }),
-      },
-    ];
+  const formatTime = (ms: number) => {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
 
-  // Manual claim handler
-  const handleManualClaim = useCallback((item: typeof SHOP_ITEMS[0]) => {
-    console.log('🔧 Manual claim for:', item.id);
-    fetchVerifiedPurchases();
-    setLastPurchasedItem(item);
-    setPurchaseSuccess(true);
-    setPendingPurchaseItem(null);
-    setSelectedItem(null);
-    setProcessingPurchase(false);
-    setTimeout(() => {
-      setPurchaseSuccess(false);
-      setLastPurchasedItem(null);
-    }, 6000);
-  }, [fetchVerifiedPurchases]);
+  const buildPurchaseCalls = (priceETH: string) => {
+    return [{
+      to: INSTANT_BURN,
+      value: parseEther(priceETH),
+      data: encodeFunctionData({
+        abi: INSTANT_BURN_ABI,
+        functionName: 'buyAndBurn',
+        args: [],
+      }),
+    }];
+  };
+
+  // Start verification after transaction
+  const startVerification = useCallback((item: typeof SHOP_ITEMS[0]) => {
+    setPendingVerification({
+      item,
+      startTime: Date.now(),
+      initialBurnCount: userBurnCount,
+      status: 'Waiting for blockchain confirmation...',
+    });
+    setVerificationError(null);
+  }, [userBurnCount]);
 
   // Parse burn stats
   const burnStatsArray = burnStats as [bigint, bigint, bigint] | undefined;
-  const lifetimeEthBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[0], 18)) : 0;
-  const lifetimeBgBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[1], 18)) : 0;
   const totalBurnCount = burnStatsArray ? Number(burnStatsArray[2]) : 0;
 
-  // Count verified purchases by item
+  // Count verified purchases
   const verifiedPurchaseCounts = useMemo(() => {
     const counts: Record<string, number> = {};
     verifiedPurchases.forEach(p => {
@@ -842,7 +820,7 @@ export default function MinerGame() {
           <span className="text-xl">⛏️</span>
           <span className="text-sm font-bold text-[#D4AF37]">BASEGOLD MINER</span>
           {hasCrown && <span>👑</span>}
-          <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded ml-2">SECURED</span>
+          <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded ml-1">ON-CHAIN</span>
         </div>
         <Wallet>
           <ConnectWallet>
@@ -852,7 +830,7 @@ export default function MinerGame() {
         </Wallet>
       </header>
 
-      {/* Live Burn Ticker */}
+      {/* Burn Ticker */}
       <div className="bg-gradient-to-r from-red-900/30 via-orange-900/30 to-red-900/30 border-b border-orange-500/30 py-2 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-2">
@@ -869,7 +847,7 @@ export default function MinerGame() {
         </div>
       </div>
 
-      {/* Balance Displays */}
+      {/* Balances */}
       <div className="bg-gradient-to-r from-[#D4AF37]/10 via-[#996515]/10 to-[#D4AF37]/10 border-b border-[#D4AF37]/30 py-3 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-3">
@@ -877,13 +855,12 @@ export default function MinerGame() {
             <div>
               <div className="text-xs text-gray-400">Your BaseGold</div>
               <div className="text-xl font-bold text-[#D4AF37] font-mono">
-                {isConnected && bgBalance ? parseFloat(bgBalance.formatted).toFixed(4) : '0.0000'} 
-                <span className="text-sm text-gray-500 ml-1">BG</span>
+                {isConnected && bgBalance ? parseFloat(bgBalance.formatted).toFixed(4) : '0.0000'}
               </div>
             </div>
           </div>
           <button onClick={() => setActiveTab('buy')} className="px-4 py-2 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold text-sm rounded-lg">
-            {isConnected && bgBalance && parseFloat(bgBalance.formatted) > 0 ? '+ Buy More' : '🛒 Buy BG'}
+            🛒 Buy BG
           </button>
         </div>
       </div>
@@ -896,25 +873,19 @@ export default function MinerGame() {
               <div className="text-xs text-gray-400">Your ETH</div>
               <div className="text-lg font-bold text-[#627EEA] font-mono">
                 {isConnected && ethBalance ? parseFloat(ethBalance.formatted).toFixed(4) : '0.0000'}
-                <span className="text-xs text-gray-500 ml-1">ETH</span>
               </div>
             </div>
           </div>
           <div className="flex gap-2">
             <FundButton className="px-3 py-1.5 bg-[#627EEA] text-white font-medium text-xs rounded-lg" />
-            <a 
-              href="https://relay.link/bridge/base" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="px-3 py-1.5 bg-[#627EEA]/20 border border-[#627EEA]/50 text-[#627EEA] font-medium text-xs rounded-lg hover:bg-[#627EEA]/30 transition-all"
-            >
+            <a href="https://relay.link/bridge/base" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 bg-[#627EEA]/20 border border-[#627EEA]/50 text-[#627EEA] font-medium text-xs rounded-lg hover:bg-[#627EEA]/30">
               🌉 Bridge
             </a>
           </div>
         </div>
       </div>
 
-      {/* Tab Navigation */}
+      {/* Tabs */}
       <div className="flex border-b border-white/10 overflow-x-auto">
         {[
           { id: 'game', label: '⛏️ Mine' },
@@ -926,10 +897,7 @@ export default function MinerGame() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`flex-1 py-3 text-xs font-medium transition-all whitespace-nowrap px-2
-              ${activeTab === tab.id 
-                ? 'text-[#D4AF37] border-b-2 border-[#D4AF37] bg-[#D4AF37]/5' 
-                : 'text-gray-500 hover:text-gray-300'}`}
+            className={`flex-1 py-3 text-xs font-medium transition-all whitespace-nowrap px-2 ${activeTab === tab.id ? 'text-[#D4AF37] border-b-2 border-[#D4AF37] bg-[#D4AF37]/5' : 'text-gray-500'}`}
           >
             {tab.label}
           </button>
@@ -960,12 +928,12 @@ export default function MinerGame() {
               </div>
             </div>
 
-            {/* Verified On-Chain Bonuses */}
-            {(verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || verifiedBonuses.hasCrown) && (
+            {/* On-Chain Verified Bonuses */}
+            {(verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || hasCrown || boostEndTime) && (
               <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
                 <div className="text-xs text-green-300 font-medium mb-2 text-center flex items-center justify-center gap-2">
                   <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                  Verified On-Chain Bonuses
+                  On-Chain Verified Bonuses
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   {verifiedBonuses.bonusClick > 0 && (
@@ -981,34 +949,23 @@ export default function MinerGame() {
                     </div>
                   )}
                 </div>
-                <div className="mt-2 text-center text-[10px] text-gray-400">
-                  Burns: {userBurnCount} | Total: {userBurnAmount.toFixed(6)} BG
-                </div>
-              </div>
-            )}
-
-            {/* Active Boost */}
-            {boostEndTime && (
-              <div className="mb-4 p-2 bg-[#D4AF37]/20 border border-[#D4AF37] rounded-lg text-center animate-pulse">
-                <span className="text-[#D4AF37]">⚡ {clickMultiplier}x BOOST ACTIVE</span>
+                {boostEndTime && (
+                  <div className="mt-2 p-2 bg-yellow-500/20 rounded text-center">
+                    <div className="text-yellow-400 font-bold">⚡ {clickMultiplier}x BOOST</div>
+                    <div className="text-yellow-300 text-xs">{formatTime(boostRemaining)} remaining</div>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Gold Coin */}
             <div className="relative flex justify-center items-center h-56 mb-4">
               {floatingTexts.map(ft => (
-                <div
-                  key={ft.id}
-                  className="absolute pointer-events-none font-bold text-[#D4AF37] text-xl"
-                  style={{ left: ft.x, top: ft.y, animation: 'floatUp 1s ease-out forwards' }}
-                >
+                <div key={ft.id} className="absolute pointer-events-none font-bold text-[#D4AF37] text-xl" style={{ left: ft.x, top: ft.y, animation: 'floatUp 1s ease-out forwards' }}>
                   {ft.text}
                 </div>
               ))}
-              <button
-                onClick={handleClick}
-                className="w-44 h-44 rounded-full select-none bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] border-8 border-[#996515] shadow-[0_10px_30px_rgba(0,0,0,0.5),0_0_50px_rgba(212,175,55,0.3)] hover:shadow-[0_0_80px_rgba(212,175,55,0.5)] active:scale-95 transition-all duration-100 flex items-center justify-center text-4xl font-bold text-[#996515]"
-              >
+              <button onClick={handleClick} className="w-44 h-44 rounded-full select-none bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] border-8 border-[#996515] shadow-[0_10px_30px_rgba(0,0,0,0.5),0_0_50px_rgba(212,175,55,0.3)] hover:shadow-[0_0_80px_rgba(212,175,55,0.5)] active:scale-95 transition-all duration-100 flex items-center justify-center text-4xl font-bold text-[#996515]">
                 BG
               </button>
             </div>
@@ -1021,10 +978,7 @@ export default function MinerGame() {
                   key={key}
                   onClick={() => buyUpgrade(key as keyof typeof upgrades)}
                   disabled={gold < upgrade.cost}
-                  className={`p-2 rounded-lg border transition-all text-left text-sm
-                    ${gold >= upgrade.cost 
-                      ? 'bg-[#D4AF37]/10 border-[#D4AF37]/50 hover:bg-[#D4AF37]/20' 
-                      : 'bg-white/5 border-white/10 opacity-50'}`}
+                  className={`p-2 rounded-lg border transition-all text-left text-sm ${gold >= upgrade.cost ? 'bg-[#D4AF37]/10 border-[#D4AF37]/50 hover:bg-[#D4AF37]/20' : 'bg-white/5 border-white/10 opacity-50'}`}
                 >
                   <div className="flex items-center gap-1 mb-1">
                     <span>{upgrade.emoji}</span>
@@ -1045,54 +999,58 @@ export default function MinerGame() {
           <>
             <div className="text-center mb-4">
               <h2 className="text-xl font-bold text-[#D4AF37] mb-1">💎 Premium Shop</h2>
-              <p className="text-xs text-orange-400">Every purchase burns BG & is verified on-chain! 🔥</p>
+              <p className="text-xs text-gray-400">All purchases verified on Base blockchain 🔗</p>
             </div>
 
-            {loadingVerification && (
-              <div className="mb-4 p-3 bg-blue-500/20 border border-blue-500 rounded-lg text-center">
-                <span className="text-blue-400">🔄 Verifying on-chain purchases...</span>
+            {/* Verification in Progress */}
+            {pendingVerification && (
+              <div className="mb-4">
+                <VerificationStatus status={pendingVerification.status} item={pendingVerification.item} />
               </div>
             )}
 
-            {purchaseSuccess && lastPurchasedItem && (
+            {/* Verification Success */}
+            {verificationSuccess && (
               <div className="mb-4 p-4 bg-green-500/20 border-2 border-green-500 rounded-xl text-center">
-                <div className="text-3xl mb-2">🎉</div>
-                <div className="text-green-400 font-bold text-lg">Purchase Verified!</div>
+                <div className="text-3xl mb-2">✅</div>
+                <div className="text-green-400 font-bold text-lg">Verified On-Chain!</div>
                 <div className="mt-2 p-2 bg-black/30 rounded-lg">
-                  <div className="text-white font-medium">{lastPurchasedItem.emoji} {lastPurchasedItem.name}</div>
+                  <div className="text-white font-medium">{verificationSuccess.emoji} {verificationSuccess.name}</div>
                   <div className="text-green-300 text-sm mt-1">
-                    {lastPurchasedItem.effect.type === 'permanent_click' && `✅ +${lastPurchasedItem.effect.amount} gold per click!`}
-                    {lastPurchasedItem.effect.type === 'permanent_passive' && `✅ +${lastPurchasedItem.effect.amount} gold per second!`}
-                    {lastPurchasedItem.effect.type === 'boost' && `✅ ${lastPurchasedItem.effect.multiplier}x boost active!`}
-                    {lastPurchasedItem.effect.type === 'instant_gold' && `✅ +${lastPurchasedItem.effect.hours} hour(s) of gold!`}
-                    {lastPurchasedItem.effect.type === 'cosmetic' && `✅ Crown unlocked! Max combo: ${lastPurchasedItem.effect.maxCombo}x`}
-                    {lastPurchasedItem.effect.type === 'burn_contribution' && `✅ BG burned! Thank you!`}
+                    {verificationSuccess.effect.type === 'permanent_click' && `+${verificationSuccess.effect.amount} gold per click`}
+                    {verificationSuccess.effect.type === 'permanent_passive' && `+${verificationSuccess.effect.amount} gold per second`}
+                    {verificationSuccess.effect.type === 'boost' && `${verificationSuccess.effect.multiplier}x boost for ${(verificationSuccess.effect.duration || 0) / 60000} min`}
+                    {verificationSuccess.effect.type === 'instant_gold' && `+${verificationSuccess.effect.hours} hour(s) of gold`}
+                    {verificationSuccess.effect.type === 'cosmetic' && `Crown unlocked!`}
+                    {verificationSuccess.effect.type === 'burn_contribution' && `BG burned!`}
                   </div>
                 </div>
-                <div className="text-orange-400 text-xs mt-2 flex items-center justify-center gap-1">
-                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Verified on Base blockchain
-                </div>
+                <div className="text-xs text-gray-400 mt-2">Transaction confirmed on Base</div>
               </div>
             )}
 
-            {processingPurchase && !purchaseSuccess && (
-              <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500 rounded-lg text-center">
-                <span className="text-yellow-400">⏳ Processing transaction...</span>
+            {/* Verification Error */}
+            {verificationError && (
+              <div className="mb-4 p-4 bg-red-500/20 border border-red-500 rounded-xl text-center">
+                <div className="text-red-400">{verificationError}</div>
+                <button onClick={() => setVerificationError(null)} className="mt-2 text-xs text-gray-400 hover:text-white">
+                  Dismiss
+                </button>
               </div>
             )}
 
+            {/* Shop Items */}
             <div className="space-y-2">
               {SHOP_ITEMS.map(item => {
                 const purchaseCount = verifiedPurchaseCounts[item.id] || 0;
+                const isDisabled = !!pendingVerification;
+                
                 return (
                   <div key={item.id}>
                     <button
-                      onClick={() => setSelectedItem(selectedItem?.id === item.id ? null : item)}
-                      className={`w-full p-3 rounded-xl border transition-all text-left
-                        ${selectedItem?.id === item.id 
-                          ? 'bg-[#627EEA]/20 border-[#627EEA]' 
-                          : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'}`}
+                      onClick={() => !isDisabled && setSelectedItem(selectedItem?.id === item.id ? null : item)}
+                      disabled={isDisabled}
+                      className={`w-full p-3 rounded-xl border transition-all text-left ${isDisabled ? 'opacity-50' : ''} ${selectedItem?.id === item.id ? 'bg-[#627EEA]/20 border-[#627EEA]' : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'}`}
                     >
                       <div className="flex justify-between items-start">
                         <div className="flex items-center gap-2">
@@ -1117,37 +1075,30 @@ export default function MinerGame() {
                       </div>
                     </button>
                     
-                    {selectedItem?.id === item.id && isConnected && (
-                      <div className="mt-2 p-2 bg-black/50 rounded-lg space-y-2">
+                    {selectedItem?.id === item.id && isConnected && !pendingVerification && (
+                      <div className="mt-2 p-3 bg-black/50 rounded-lg space-y-3">
+                        <div className="text-xs text-gray-400 text-center">
+                          ⏱️ After purchase, we'll verify on-chain before applying effects
+                        </div>
                         <Transaction
                           chainId={base.id}
                           calls={buildPurchaseCalls(item.priceETH)}
                           onStatus={(status) => {
-                            console.log('📝 onStatus:', status.statusName);
-                            if (status.statusName === 'transactionPending' || status.statusName === 'buildingTransaction') {
-                              setProcessingPurchase(true);
-                              setPendingPurchaseItem(item);
+                            console.log('📝 Status:', status.statusName);
+                            if (status.statusName === 'success') {
+                              startVerification(item);
                             }
                           }}
                         >
                           <TransactionButton 
                             text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
-                            className="w-full py-2 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
+                            className="w-full py-3 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
                           />
                           <TransactionStatus>
                             <TransactionStatusLabel />
                             <TransactionStatusAction />
                           </TransactionStatus>
                         </Transaction>
-                        
-                        {processingPurchase && (
-                          <button
-                            onClick={() => handleManualClaim(item)}
-                            className="w-full py-2 rounded-lg font-medium bg-green-600 hover:bg-green-500 text-white text-sm"
-                          >
-                            ✅ Transaction Complete? Click to Verify
-                          </button>
-                        )}
                       </div>
                     )}
                   </div>
@@ -1161,6 +1112,16 @@ export default function MinerGame() {
                 <Wallet><ConnectWallet /></Wallet>
               </div>
             )}
+
+            {/* Security Info */}
+            <div className="mt-6 p-3 bg-green-500/5 border border-green-500/20 rounded-lg">
+              <div className="text-xs text-green-400 font-medium mb-2">🔐 Security</div>
+              <ul className="text-xs text-gray-400 space-y-1">
+                <li>• All purchases verified on Base blockchain</li>
+                <li>• Effects only apply after on-chain confirmation</li>
+                <li>• Cannot be manipulated or exploited</li>
+              </ul>
+            </div>
           </>
         )}
 
@@ -1169,7 +1130,6 @@ export default function MinerGame() {
           <>
             <div className="text-center mb-4">
               <h2 className="text-xl font-bold text-[#D4AF37] mb-1">🛒 Buy BaseGold</h2>
-              <p className="text-xs text-gray-400">Get BG and watch it grow as others burn!</p>
             </div>
 
             <div className="mb-4 p-4 bg-gradient-to-br from-[#D4AF37]/20 to-[#996515]/20 border border-[#D4AF37]/30 rounded-xl">
@@ -1186,23 +1146,21 @@ export default function MinerGame() {
               </div>
             </div>
 
-            <h3 className="text-sm font-medium text-gray-300 mb-3">Choose an Exchange:</h3>
-            
             <div className="space-y-2">
-              <a href="https://aerodrome.finance/swap?from=eth&to=0x36b712A629095234F2196BbB000D1b96C12Ce78e" target="_blank" rel="noopener noreferrer" className="block p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl hover:bg-blue-500/20 transition-all">
+              <a href="https://aerodrome.finance/swap?from=eth&to=0x36b712A629095234F2196BbB000D1b96C12Ce78e" target="_blank" rel="noopener noreferrer" className="block p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl hover:bg-blue-500/20">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-xl">🔵</div>
                     <div>
                       <div className="font-medium text-white">Aerodrome</div>
-                      <div className="text-xs text-gray-400">Recommended • Best liquidity</div>
+                      <div className="text-xs text-gray-400">Best liquidity</div>
                     </div>
                   </div>
                   <div className="text-blue-400 text-sm">Swap →</div>
                 </div>
               </a>
 
-              <a href="https://app.uniswap.org/swap?outputCurrency=0x36b712A629095234F2196BbB000D1b96C12Ce78e&chain=base" target="_blank" rel="noopener noreferrer" className="block p-4 bg-pink-500/10 border border-pink-500/30 rounded-xl hover:bg-pink-500/20 transition-all">
+              <a href="https://app.uniswap.org/swap?outputCurrency=0x36b712A629095234F2196BbB000D1b96C12Ce78e&chain=base" target="_blank" rel="noopener noreferrer" className="block p-4 bg-pink-500/10 border border-pink-500/30 rounded-xl hover:bg-pink-500/20">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-pink-500/20 flex items-center justify-center text-xl">🦄</div>
@@ -1217,10 +1175,10 @@ export default function MinerGame() {
             </div>
 
             <div className="mt-4 p-3 bg-white/5 rounded-lg">
-              <div className="text-xs text-gray-400 mb-1">BG Contract Address:</div>
+              <div className="text-xs text-gray-400 mb-1">Contract:</div>
               <div className="flex items-center gap-2">
                 <code className="text-xs text-[#D4AF37] font-mono flex-1 truncate">0x36b712A629095234F2196BbB000D1b96C12Ce78e</code>
-                <button onClick={() => { navigator.clipboard.writeText('0x36b712A629095234F2196BbB000D1b96C12Ce78e'); alert('Copied!'); }} className="px-2 py-1 bg-white/10 rounded text-xs hover:bg-white/20">Copy</button>
+                <button onClick={() => { navigator.clipboard.writeText('0x36b712A629095234F2196BbB000D1b96C12Ce78e'); }} className="px-2 py-1 bg-white/10 rounded text-xs">Copy</button>
               </div>
             </div>
           </>
@@ -1231,55 +1189,30 @@ export default function MinerGame() {
           <>
             <div className="text-center mb-4">
               <h2 className="text-xl font-bold text-[#D4AF37] mb-1">🏆 Leaderboards</h2>
-              <p className="text-xs text-gray-400">Verified on-chain rankings</p>
             </div>
 
             <div className="flex gap-2 mb-4">
-              <button
-                onClick={() => setLeaderboardTab('burns')}
-                className={`flex-1 py-2 rounded-lg font-medium transition-all text-sm
-                  ${leaderboardTab === 'burns' 
-                    ? 'bg-orange-500/20 border border-orange-500 text-orange-400' 
-                    : 'bg-white/5 border border-white/10 text-gray-400'}`}
-              >
-                🔥 Top Burners
+              <button onClick={() => setLeaderboardTab('burns')} className={`flex-1 py-2 rounded-lg font-medium text-sm ${leaderboardTab === 'burns' ? 'bg-orange-500/20 border border-orange-500 text-orange-400' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
+                🔥 Burners
               </button>
-              <button
-                onClick={() => setLeaderboardTab('points')}
-                className={`flex-1 py-2 rounded-lg font-medium transition-all text-sm
-                  ${leaderboardTab === 'points' 
-                    ? 'bg-[#D4AF37]/20 border border-[#D4AF37] text-[#D4AF37]' 
-                    : 'bg-white/5 border border-white/10 text-gray-400'}`}
-              >
-                ⛏️ Top Miners
+              <button onClick={() => setLeaderboardTab('points')} className={`flex-1 py-2 rounded-lg font-medium text-sm ${leaderboardTab === 'points' ? 'bg-[#D4AF37]/20 border border-[#D4AF37] text-[#D4AF37]' : 'bg-white/5 border border-white/10 text-gray-400'}`}>
+                ⛏️ Miners
               </button>
             </div>
 
             {leaderboardTab === 'burns' && (
               <div className="space-y-2">
                 <div className="p-2 bg-green-500/10 border border-green-500/30 rounded-lg text-center text-xs text-green-400">
-                  ✓ 100% On-Chain Verified
+                  ✓ 100% On-Chain
                 </div>
                 
                 {loadingLeaderboard ? (
-                  <div className="text-center py-8 text-gray-400">
-                    <div className="animate-spin text-2xl mb-2">🔥</div>
-                    Loading from blockchain...
-                  </div>
+                  <div className="text-center py-8 text-gray-400">Loading...</div>
                 ) : burnLeaderboard.length === 0 ? (
-                  <div className="text-center py-8 text-gray-400">
-                    <div className="text-4xl mb-2">🔥</div>
-                    <p>No burns yet!</p>
-                  </div>
+                  <div className="text-center py-8 text-gray-400">No burns yet</div>
                 ) : (
                   burnLeaderboard.slice(0, 10).map((entry, index) => (
-                    <div 
-                      key={entry.address}
-                      className={`flex justify-between items-center p-3 rounded-lg border
-                        ${entry.address.toLowerCase() === address?.toLowerCase()
-                          ? 'bg-orange-500/20 border-orange-500'
-                          : 'bg-white/5 border-white/10'}`}
-                    >
+                    <div key={entry.address} className={`flex justify-between items-center p-3 rounded-lg border ${entry.address.toLowerCase() === address?.toLowerCase() ? 'bg-orange-500/20 border-orange-500' : 'bg-white/5 border-white/10'}`}>
                       <div className="flex items-center gap-3">
                         <span className={`text-lg font-bold w-8 ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-gray-300' : index === 2 ? 'text-orange-400' : 'text-gray-500'}`}>
                           {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
@@ -1295,79 +1228,46 @@ export default function MinerGame() {
 
             {leaderboardTab === 'points' && (
               <div className="space-y-2">
-                {/* Requirements Notice */}
-                <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
-                  <div className="text-xs text-blue-400 mb-2">📋 Requirements to Submit:</div>
-                  <ul className="text-xs text-gray-400 space-y-1">
-                    <li>✓ Minimum {MIN_BURNS_FOR_LEADERBOARD} burn transaction(s)</li>
-                    <li>✓ Wallet signature verification</li>
-                    <li>✓ Score validation (anti-cheat)</li>
-                  </ul>
+                <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-xs text-blue-400">
+                  Requires: {MIN_BURNS_FOR_LEADERBOARD}+ burn(s) + wallet signature
                 </div>
 
                 {isConnected && (
                   <div className="p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-lg">
                     <div className="flex justify-between items-center mb-2">
                       <span className="text-sm text-gray-300">Your Score:</span>
-                      <span className="text-[#D4AF37] font-bold">{formatNumber(gold)} gold</span>
+                      <span className="text-[#D4AF37] font-bold">{formatNumber(gold)}</span>
                     </div>
                     <div className="flex justify-between items-center mb-2 text-xs">
-                      <span className="text-gray-400">Your Burns:</span>
+                      <span className="text-gray-400">Burns:</span>
                       <span className={userBurnCount >= MIN_BURNS_FOR_LEADERBOARD ? 'text-green-400' : 'text-red-400'}>
-                        {userBurnCount} {userBurnCount >= MIN_BURNS_FOR_LEADERBOARD ? '✓' : `(need ${MIN_BURNS_FOR_LEADERBOARD})`}
+                        {userBurnCount} {userBurnCount >= MIN_BURNS_FOR_LEADERBOARD ? '✓' : '✗'}
                       </span>
                     </div>
                     
-                    {submitError && (
-                      <div className="mb-2 p-2 bg-red-500/20 border border-red-500/50 rounded text-xs text-red-400">
-                        {submitError}
-                      </div>
-                    )}
+                    {submitError && <div className="mb-2 p-2 bg-red-500/20 rounded text-xs text-red-400">{submitError}</div>}
                     
                     <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={playerName}
-                        onChange={(e) => setPlayerName(e.target.value.slice(0, 20))}
-                        placeholder="Your name"
-                        className="flex-1 bg-black/50 border border-white/20 rounded px-2 py-1 text-sm"
-                        maxLength={20}
-                      />
-                      <button
-                        onClick={submitVerifiedScore}
-                        disabled={submittingScore || userBurnCount < MIN_BURNS_FOR_LEADERBOARD}
-                        className={`px-4 py-1 rounded font-medium text-sm flex items-center gap-1
-                          ${userBurnCount >= MIN_BURNS_FOR_LEADERBOARD 
-                            ? 'bg-[#D4AF37] text-black' 
-                            : 'bg-gray-600 text-gray-400'}`}
-                      >
-                        {submittingScore ? '...' : '🔐 Sign & Submit'}
+                      <input type="text" value={playerName} onChange={(e) => setPlayerName(e.target.value.slice(0, 20))} placeholder="Name" className="flex-1 bg-black/50 border border-white/20 rounded px-2 py-1 text-sm" />
+                      <button onClick={submitVerifiedScore} disabled={submittingScore || userBurnCount < MIN_BURNS_FOR_LEADERBOARD} className={`px-4 py-1 rounded font-medium text-sm ${userBurnCount >= MIN_BURNS_FOR_LEADERBOARD ? 'bg-[#D4AF37] text-black' : 'bg-gray-600 text-gray-400'}`}>
+                        {submittingScore ? '...' : '🔐 Submit'}
                       </button>
                     </div>
                   </div>
                 )}
 
                 {pointsLeaderboard.length === 0 ? (
-                  <div className="text-center py-8 text-gray-400">
-                    <div className="text-4xl mb-2">⛏️</div>
-                    <p>No verified scores yet!</p>
-                  </div>
+                  <div className="text-center py-8 text-gray-400">No scores yet</div>
                 ) : (
                   pointsLeaderboard.slice(0, 10).map((entry, index) => (
-                    <div 
-                      key={entry.address}
-                      className={`flex justify-between items-center p-3 rounded-lg border
-                        ${entry.address.toLowerCase() === address?.toLowerCase()
-                          ? 'bg-[#D4AF37]/20 border-[#D4AF37]'
-                          : 'bg-white/5 border-white/10'}`}
-                    >
+                    <div key={entry.address} className={`flex justify-between items-center p-3 rounded-lg border ${entry.address.toLowerCase() === address?.toLowerCase() ? 'bg-[#D4AF37]/20 border-[#D4AF37]' : 'bg-white/5 border-white/10'}`}>
                       <div className="flex items-center gap-3">
                         <span className={`text-lg font-bold w-8 ${index === 0 ? 'text-yellow-400' : index === 1 ? 'text-gray-300' : index === 2 ? 'text-orange-400' : 'text-gray-500'}`}>
                           {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
                         </span>
                         <div>
                           <div className="font-medium text-sm">{entry.name}</div>
-                          <div className="text-xs text-gray-500">🔥 {entry.burnCount} burns</div>
+                          <div className="text-xs text-gray-500">🔥 {entry.burnCount}</div>
                         </div>
                       </div>
                       <div className="text-[#D4AF37] font-bold">{formatNumber(entry.gold)}</div>
@@ -1383,14 +1283,13 @@ export default function MinerGame() {
         {activeTab === 'stats' && (
           <>
             <div className="text-center mb-4">
-              <h2 className="text-xl font-bold text-[#D4AF37] mb-1">📊 Burn Stats</h2>
-              <p className="text-xs text-gray-400">Real-time deflationary metrics</p>
+              <h2 className="text-xl font-bold text-[#D4AF37] mb-1">📊 Stats</h2>
             </div>
 
             <div className="mb-6 p-6 bg-gradient-to-br from-orange-900/30 to-red-900/30 border border-orange-500/30 rounded-2xl text-center">
               <div className="text-5xl mb-2">🔥</div>
               <div className="text-3xl font-bold text-orange-400 font-mono">{totalBurned.toFixed(4)}</div>
-              <div className="text-gray-400">BG Burned Forever</div>
+              <div className="text-gray-400">BG Burned</div>
             </div>
 
             <div className="grid grid-cols-2 gap-3 mb-4">
@@ -1413,11 +1312,15 @@ export default function MinerGame() {
             </div>
 
             <div className="bg-white/5 p-4 rounded-xl">
-              <h3 className="text-sm font-medium text-gray-300 mb-3">🔐 Security Features</h3>
+              <h3 className="text-sm font-medium text-gray-300 mb-3">🔐 Security</h3>
               <div className="space-y-2 text-xs">
                 <div className="flex items-center gap-2 text-green-400">
                   <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Premium purchases verified on-chain
+                  Shop purchases verified on-chain
+                </div>
+                <div className="flex items-center gap-2 text-green-400">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  Effects only apply after blockchain confirmation
                 </div>
                 <div className="flex items-center gap-2 text-green-400">
                   <span className="w-2 h-2 bg-green-500 rounded-full"></span>
@@ -1425,15 +1328,7 @@ export default function MinerGame() {
                 </div>
                 <div className="flex items-center gap-2 text-green-400">
                   <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Click rate anti-cheat ({MAX_CLICKS_PER_SECOND} CPS max)
-                </div>
-                <div className="flex items-center gap-2 text-green-400">
-                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Score validation vs blockchain data
-                </div>
-                <div className="flex items-center gap-2 text-green-400">
-                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Minimum burn requirement for leaderboard
+                  Click rate limited ({MAX_CLICKS_PER_SECOND} CPS max)
                 </div>
               </div>
             </div>
