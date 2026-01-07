@@ -374,7 +374,8 @@ export default function MinerGame() {
   // UI state
   const [activeTab, setActiveTab] = useState<'game' | 'shop' | 'buy' | 'leaderboard' | 'stats'>('game');
   const [floatingTexts, setFloatingTexts] = useState<Array<{id: number, text: string, x: number, y: number}>>([]);
-  const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
+ const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
+  const [txError, setTxError] = useState<string | null>(null);
   
   // Burn notifications
   const [burnNotifications, setBurnNotifications] = useState<Array<{ id: number; amount: string; buyer: string }>>([]);
@@ -1610,18 +1611,32 @@ export default function MinerGame() {
                         <div className="text-xs text-gray-400 text-center">
                           ⏱️ After purchase, we'll verify on-chain before applying effects
                         </div>
+                        
+                        {/* Show error if transaction failed */}
+                        {txError && (
+                          <div className="p-2 bg-red-500/20 border border-red-500/50 rounded-lg text-center">
+                            <div className="text-red-400 text-sm">Transaction failed</div>
+                            <div className="text-gray-400 text-xs mt-1">Please try again</div>
+                          </div>
+                        )}
+                        
                         <Transaction
                           chainId={base.id}
                           calls={buildPurchaseCalls(item.priceETH)}
                           onSuccess={(response) => {
                             console.log('✅ Transaction success:', response);
+                            setTxError(null);
                             startVerification(item);
                           }}
                           onError={(error) => {
                             console.error('❌ Transaction error:', error);
+                            setTxError('Transaction was rejected or failed');
                           }}
                           onStatus={(status) => {
                             console.log('📝 Status:', status.statusName);
+                            if (status.statusName === 'init') {
+                              setTxError(null);
+                            }
                           }}
                         >
                           <TransactionButton 
@@ -1633,7 +1648,19 @@ export default function MinerGame() {
                             <TransactionStatusAction />
                           </TransactionStatus>
                         </Transaction>
+                        
+                        {/* Cancel button - always visible */}
+                        <button
+                          onClick={() => {
+                            setSelectedItem(null);
+                            setTxError(null);
+                          }}
+                          className="w-full py-2 bg-gray-700/50 border border-gray-600 text-gray-300 rounded-lg text-sm hover:bg-gray-600/50 transition-all"
+                        >
+                          ✕ Cancel
+                        </button>
                       </div>
+                    )}
                     )}
                   </div>
                 );
