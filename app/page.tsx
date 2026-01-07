@@ -16,6 +16,155 @@ import { Avatar, Name } from '@coinbase/onchainkit/identity';
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
 
+// ============ SOUND SYSTEM ============
+
+let audioContext: AudioContext | null = null;
+
+function initAudio() {
+  if (typeof window === 'undefined') return;
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+  if (audioContext.state === 'suspended') {
+    audioContext.resume();
+  }
+}
+
+function playSound(type: string, comboLevel: number = 1, soundEnabled: boolean = true) {
+  if (!soundEnabled || typeof window === 'undefined') return;
+  initAudio();
+  if (!audioContext) return;
+  
+  const ctx = audioContext;
+  const now = ctx.currentTime;
+  
+  if (type === 'click') {
+    // Coin click - short bright ding
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.frequency.setValueAtTime(880, now);
+    osc.frequency.exponentialRampToValueAtTime(1760, now + 0.05);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+    osc.start(now);
+    osc.stop(now + 0.1);
+  }
+  
+  else if (type === 'combo') {
+    // Combo - rising pitch based on combo level
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'triangle';
+    const baseFreq = 440 + (comboLevel * 100);
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, now + 0.1);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+  
+  else if (type === 'megaCombo') {
+    // Mega combo (5x+) - power chord
+    [523, 659, 784].forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now);
+      gain.gain.setValueAtTime(0.15, now);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+      osc.start(now + i * 0.02);
+      osc.stop(now + 0.3);
+    });
+  }
+  
+  else if (type === 'upgrade') {
+    // Upgrade - success chime
+    const notes = [523, 659, 784, 1047];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + i * 0.1);
+      gain.gain.setValueAtTime(0.2, now + i * 0.1);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.1 + 0.2);
+      osc.start(now + i * 0.1);
+      osc.stop(now + i * 0.1 + 0.2);
+    });
+  }
+  
+  else if (type === 'achievement') {
+    // Achievement - fanfare
+    const melody = [523, 659, 784, 1047, 784, 1047];
+    melody.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(freq, now + i * 0.08);
+      gain.gain.setValueAtTime(0.15, now + i * 0.08);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.08 + 0.15);
+      osc.start(now + i * 0.08);
+      osc.stop(now + i * 0.08 + 0.15);
+    });
+  }
+  
+  else if (type === 'cantAfford') {
+    // Can't afford - error buzz
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(150, now);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+  
+  else if (type === 'purchase') {
+    // Purchase - ka-ching!
+    const notes = [1047, 1319, 1568];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + i * 0.05);
+      gain.gain.setValueAtTime(0.25, now + i * 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.05 + 0.2);
+      osc.start(now + i * 0.05);
+      osc.stop(now + i * 0.05 + 0.2);
+    });
+  }
+  
+  else if (type === 'burn') {
+    // Burn notification - whoosh + sizzle
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(200, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 0.5);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+    osc.start(now);
+    osc.stop(now + 0.5);
+  }
+}
+
 // ============ RELIABLE PUBLIC CLIENT WITH FALLBACK RPCS ============
 
 const reliableClient = createPublicClient({
@@ -467,6 +616,7 @@ function AdBanner() {
 
 function BurnNotification({ burn, onComplete }: { burn: { amount: string; buyer: string }; onComplete: () => void }) {
   useEffect(() => {
+    playSound('burn', 1, true); // Always play burn sound for notifications
     const timer = setTimeout(onComplete, 4000);
     return () => clearTimeout(timer);
   }, [onComplete]);
@@ -505,6 +655,7 @@ function VerificationStatus({ status, item }: { status: string; item: typeof SHO
 
 export default function MinerGame() {
   const [isReady, setIsReady] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   const sessionStartTime = useRef(Date.now());
   const clickTimestamps = useRef<number[]>([]);
   
@@ -588,6 +739,26 @@ export default function MinerGame() {
   useEffect(() => {
     const interval = setInterval(() => setCurrentTime(Date.now()), 1000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Load sound preference from localStorage
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedSound = localStorage.getItem('basegold-sound');
+      if (savedSound !== null) {
+        setSoundEnabled(savedSound === 'true');
+      }
+    }
+  }, []);
+
+  // Toggle sound function
+  const toggleSound = useCallback(() => {
+    setSoundEnabled(prev => {
+      const newValue = !prev;
+      localStorage.setItem('basegold-sound', String(newValue));
+      if (newValue) playSound('click', 1, true);
+      return newValue;
+    });
   }, []);
 
   // ============ SESSION MANAGEMENT (ONE DEVICE PER WALLET) ============
@@ -1036,6 +1207,7 @@ export default function MinerGame() {
               setPendingVerification(null);
               setSelectedItem(null);
               setPurchaseVerified(true); // Trigger auto-save
+              playSound('achievement', 1, true); // Always play achievement sound
               
               setTimeout(() => setVerificationSuccess(null), 6000);
             }
@@ -1197,9 +1369,11 @@ export default function MinerGame() {
       // Refresh leaderboard
       await loadPointsLeaderboard();
       
+      playSound('achievement', 1, soundEnabled);
       alert(`✅ Score submitted! Rank: #${data.rank} 🏆`);
     } catch (error: any) {
       console.error('Error submitting score:', error);
+      playSound('cantAfford', 1, soundEnabled);
       if (error.message?.includes('User rejected')) {
         setSubmitError('Signature cancelled');
       } else {
@@ -1208,7 +1382,7 @@ export default function MinerGame() {
     }
     
     setSubmittingScore(false);
-  }, [address, signMessageAsync, sessionId, isKicked, gold, totalClicks, userBurnCount, playerName, saveGameToServer, loadPointsLeaderboard]);
+  }, [address, signMessageAsync, sessionId, isKicked, gold, totalClicks, userBurnCount, playerName, saveGameToServer, loadPointsLeaderboard, soundEnabled]);
 
   // ============ GAME LOGIC ============
 
@@ -1278,19 +1452,30 @@ export default function MinerGame() {
     setGold(prev => prev + earned);
     setTotalClicks(prev => prev + 1);
     
+    // Play sounds
+    playSound('click', newCombo, soundEnabled);
+    if (newCombo >= 5) {
+      playSound('megaCombo', newCombo, soundEnabled);
+    } else if (newCombo > 1) {
+      playSound('combo', newCombo, soundEnabled);
+    }
+    
     const id = Date.now();
     setFloatingTexts(prev => [...prev, { id, text: `+${formatNumber(earned)}`, x, y }]);
     setTimeout(() => setFloatingTexts(prev => prev.filter(ft => ft.id !== id)), 1000);
-  }, [combo, lastClickTime, goldPerClick, clickMultiplier, maxCombo]);
+  }, [combo, lastClickTime, goldPerClick, clickMultiplier, maxCombo, soundEnabled]);
 
   const buyUpgrade = (key: keyof typeof upgrades) => {
     const upgrade = upgrades[key];
     if (gold >= upgrade.cost) {
+      playSound('upgrade', 1, soundEnabled);
       setGold(prev => prev - upgrade.cost);
       setUpgrades(prev => ({
         ...prev,
         [key]: { ...prev[key], owned: prev[key].owned + 1, cost: Math.floor(prev[key].cost * prev[key].multiplier) }
       }));
+    } else {
+      playSound('cantAfford', 1, soundEnabled);
     }
   };
 
@@ -1495,12 +1680,24 @@ export default function MinerGame() {
           {hasCrown && <span>👑</span>}
           <span className="text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded ml-1">ON-CHAIN</span>
         </div>
-        <Wallet>
-          <ConnectWallet>
-            <Avatar className="w-5 h-5" />
-            <Name className="text-xs" />
-          </ConnectWallet>
-        </Wallet>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleSound}
+            className={`w-9 h-9 rounded-full border flex items-center justify-center transition-all ${
+              soundEnabled 
+                ? 'bg-[#D4AF37]/20 border-[#D4AF37]/50 hover:bg-[#D4AF37]/30' 
+                : 'bg-white/10 border-white/20 opacity-50'
+            }`}
+          >
+            {soundEnabled ? '🔊' : '🔇'}
+          </button>
+          <Wallet>
+            <ConnectWallet>
+              <Avatar className="w-5 h-5" />
+              <Name className="text-xs" />
+            </ConnectWallet>
+          </Wallet>
+        </div>
       </header>
 
       {/* Burn Ticker */}
