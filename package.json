@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@coinbase/onchainkit": "^0.36.0",
-    "@farcaster/miniapp-sdk": "^0.0.8",
+    "@farcaster/miniapp-sdk": "latest",
     "@tanstack/react-query": "^5.60.0",
     "next": "14.2.15",
     "react": "^18.3.1",
