@@ -65,19 +65,20 @@ const ERC20_ABI = [
 
 const INSTANT_BURN_ABI = [
   {
-    name: 'purchaseAndBurn',
+    name: 'buyAndBurnAuto',
     type: 'function',
-    inputs: [{ name: 'amount', type: 'uint256' }, { name: 'itemId', type: 'string' }],
+    inputs: [{ name: 'usdcAmount', type: 'uint256' }],
     outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
-    name: 'getStats',
+    name: 'getBurnStats',
     type: 'function',
     inputs: [],
     outputs: [
-      { name: '_totalUsdcReceived', type: 'uint256' },
-      { name: '_totalBgBurned', type: 'uint256' },
-      { name: '_totalBurns', type: 'uint256' }
+      { type: 'uint256' },
+      { type: 'uint256' },
+      { type: 'uint256' }
     ],
     stateMutability: 'view',
   },
@@ -372,7 +373,7 @@ export default function MinerGame() {
   const { data: burnStats, refetch: refetchBurnStats } = useReadContract({
     address: INSTANT_BURN,
     abi: INSTANT_BURN_ABI,
-    functionName: 'getStats',
+    functionName: 'getBurnStats',
   });
 
   // Game state
@@ -847,7 +848,7 @@ export default function MinerGame() {
     return Math.floor(num).toString();
   };
 
-  // Build purchase transaction (approve + purchaseAndBurn)
+  // Build purchase transaction (approve + buyAndBurnAuto)
   const buildPurchaseCalls = (priceUSDC: string, itemId: string) => {
     const amount = parseUnits(priceUSDC, 6);
     return [
@@ -863,8 +864,8 @@ export default function MinerGame() {
         to: INSTANT_BURN,
         data: encodeFunctionData({
           abi: INSTANT_BURN_ABI,
-          functionName: 'purchaseAndBurn',
-          args: [amount, itemId],
+          functionName: 'buyAndBurnAuto',
+          args: [amount],
         }),
       },
     ];
