@@ -147,9 +147,16 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate message format (basic check)
-    if (!message || !message.includes('BaseGold Leaderboard') || !message.includes(address)) {
+    if (!message || !message.includes('BaseGold Leaderboard')) {
+      console.error('Invalid message format:', { message: message?.substring(0, 100) });
       return NextResponse.json({ error: 'Invalid message format' }, { status: 400 });
     }
+    
+    console.log('Verifying signature for:', { 
+      address: address.substring(0, 10), 
+      messageStart: message.substring(0, 50),
+      sigStart: signature.substring(0, 20)
+    });
     
     let isValidSignature = false;
     try {
@@ -158,9 +165,10 @@ export async function POST(request: NextRequest) {
         message: message,
         signature: signature as `0x${string}`,
       });
-    } catch (e) {
-      console.error('Signature verification error:', e);
-      return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
+      console.log('Signature verification result:', isValidSignature);
+    } catch (e: any) {
+      console.error('Signature verification error:', e.message || e);
+      return NextResponse.json({ error: 'Signature verification failed', details: e.message }, { status: 401 });
     }
 
     if (!isValidSignature) {
