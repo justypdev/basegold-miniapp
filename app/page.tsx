@@ -10,7 +10,8 @@ import {
   TransactionStatusLabel,
   TransactionStatusAction 
 } from '@coinbase/onchainkit/transaction';
-import { ConnectWallet, Wallet } from '@coinbase/onchainkit/wallet';
+import { ConnectWallet, Wallet, WalletDropdown, WalletDropdownFundLink } from '@coinbase/onchainkit/wallet';
+import { FundButton } from '@coinbase/onchainkit/fund';
 import { Avatar, Name } from '@coinbase/onchainkit/identity';
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, keccak256, toBytes } from 'viem';
 import { base } from 'wagmi/chains';
@@ -899,9 +900,17 @@ export default function MinerGame() {
               </div>
             </div>
           </div>
-          <a href="https://bridge.base.org/" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 bg-[#627EEA]/20 border border-[#627EEA]/50 text-[#627EEA] font-medium text-xs rounded-lg">
-            Get ETH
-          </a>
+          <div className="flex gap-2">
+            <FundButton className="px-3 py-1.5 bg-[#627EEA] text-white font-medium text-xs rounded-lg" />
+            <a 
+              href="https://relay.link/bridge/base" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="px-3 py-1.5 bg-[#627EEA]/20 border border-[#627EEA]/50 text-[#627EEA] font-medium text-xs rounded-lg hover:bg-[#627EEA]/30 transition-all"
+            >
+              🌉 Bridge
+            </a>
+          </div>
         </div>
       </div>
 
