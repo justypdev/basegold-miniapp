@@ -1,3 +1,6 @@
+Here's the fixed game route with the correct environment variable names:
+
+```typescript
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyMessage } from 'viem';
@@ -5,17 +8,17 @@ import { verifyMessage } from 'viem';
 // ============ REDIS CLIENT ============
 
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN!,
+  url: process.env.UPSTASH_REDIS_REST_KV_REST_API_URL || process.env.KV_REST_API_URL!,
+  token: process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN || process.env.KV_REST_API_TOKEN!,
 });
 
 // ============ ANTI-CHEAT CONSTANTS ============
 
-const MAX_GOLD_PER_SECOND = 10000; // Maximum possible gold/sec with all upgrades
+const MAX_GOLD_PER_SECOND = 10000;
 const MAX_CLICKS_PER_SECOND = 20;
 const MAX_OFFLINE_HOURS = 8;
-const MAX_GOLD_PER_CLICK = 500; // Maximum possible with all upgrades + boosts
-const SESSION_TIMEOUT = 60000; // 60 seconds
+const MAX_GOLD_PER_CLICK = 500;
+const SESSION_TIMEOUT = 60000;
 
 // ============ TYPES ============
 
@@ -35,7 +38,6 @@ interface GameState {
   appliedInstantGold: string[];
   lastSaved: number;
   goldPerSecond: number;
-  // Anti-cheat metadata
   totalPlayTime: number;
   sessionStart: number;
   lastClickTimestamp: number;
@@ -48,44 +50,37 @@ interface SaveRequest {
   message: string;
   gameState: GameState;
   timestamp: number;
-  sessionId: string; // Required for save
+  sessionId: string;
 }
 
 // ============ VALIDATION HELPERS ============
 
 function validateGameState(newState: GameState, oldState: GameState | null, timeDelta: number): { valid: boolean; reason?: string } {
-  // Check for negative values
   if (newState.gold < 0 || newState.totalClicks < 0) {
     return { valid: false, reason: 'Negative values detected' };
   }
 
-  // If no previous state, just do basic validation
   if (!oldState) {
-    // New player - make sure they're not starting with millions
     if (newState.gold > 1000) {
       return { valid: false, reason: 'New player starting with too much gold' };
     }
     return { valid: true };
   }
 
-  // Calculate maximum possible gold gain
   const maxGoldFromClicks = (newState.totalClicks - oldState.totalClicks) * MAX_GOLD_PER_CLICK;
   const maxGoldFromPassive = (timeDelta / 1000) * MAX_GOLD_PER_SECOND;
   const maxPossibleGold = oldState.gold + maxGoldFromClicks + maxGoldFromPassive;
 
-  // Allow 20% tolerance for timing issues
   if (newState.gold > maxPossibleGold * 1.2) {
     return { valid: false, reason: `Gold gain too high: ${newState.gold} > ${maxPossibleGold}` };
   }
 
-  // Check click rate
   const clickDelta = newState.totalClicks - oldState.totalClicks;
   const secondsDelta = timeDelta / 1000;
   if (secondsDelta > 0 && clickDelta / secondsDelta > MAX_CLICKS_PER_SECOND * 1.5) {
     return { valid: false, reason: `Click rate too high: ${clickDelta / secondsDelta} CPS` };
   }
 
-  // Check for time manipulation (clock set backwards)
   if (newState.lastSaved < oldState.lastSaved - 60000) {
     return { valid: false, reason: 'Time manipulation detected' };
   }
@@ -110,14 +105,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ gameState: null, message: 'No saved game found' });
     }
 
-    // Calculate offline earnings
     const now = Date.now();
     const timeSinceLastSave = now - gameState.lastSaved;
     const maxOfflineTime = MAX_OFFLINE_HOURS * 60 * 60 * 1000;
     const offlineTime = Math.min(timeSinceLastSave, maxOfflineTime);
     
     let offlineGold = 0;
-    if (gameState.goldPerSecond > 0 && offlineTime > 60000) { // At least 1 minute
+    if (gameState.goldPerSecond > 0 && offlineTime > 60000) {
       offlineGold = Math.floor((offlineTime / 1000) * gameState.goldPerSecond);
     }
 
@@ -140,7 +134,6 @@ export async function POST(request: NextRequest) {
     const body: SaveRequest = await request.json();
     const { address, signature, message, gameState, timestamp, sessionId } = body;
 
-    // Validate address format
     const normalizedAddress = address?.toLowerCase();
     if (!normalizedAddress || !/^0x[a-f0-9]{40}$/i.test(normalizedAddress)) {
       return NextResponse.json({ error: 'Invalid address' }, { status: 400 });
@@ -169,7 +162,6 @@ export async function POST(request: NextRequest) {
       }, { status: 401 });
     }
 
-    // Check session isn't stale
     if (Date.now() - session.lastHeartbeat > SESSION_TIMEOUT * 2) {
       return NextResponse.json({ 
         error: 'Session expired', 
@@ -184,12 +176,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid message format' }, { status: 400 });
     }
 
-    // Check timestamp is recent (within 5 minutes)
     if (Math.abs(Date.now() - timestamp) > 5 * 60 * 1000) {
       return NextResponse.json({ error: 'Timestamp expired' }, { status: 400 });
     }
 
-    // Verify wallet signature
     let isValidSignature = false;
     try {
       isValidSignature = await verifyMessage({
@@ -205,11 +195,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
-    // Get existing state for validation
     const existingState = await redis.get<GameState>(`game:${normalizedAddress}`);
     const timeDelta = existingState ? gameState.lastSaved - existingState.lastSaved : 0;
 
-    // Validate game state changes
     const validation = validateGameState(gameState, existingState, timeDelta);
     if (!validation.valid) {
       console.warn(`Anti-cheat triggered for ${normalizedAddress}: ${validation.reason}`);
@@ -220,7 +208,6 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Save to KV
     await redis.set(`game:${normalizedAddress}`, gameState);
 
     return NextResponse.json({ 
