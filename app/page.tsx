@@ -199,12 +199,27 @@ function matchEthToItem(ethAmount: string): typeof SHOP_ITEMS[0] | null {
 
 // ============ HELPER: Calculate bonuses from verified purchases ============
 
-function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: number) {
+interface ActiveBoost {
+  multiplier: number;
+  endTime: number;
+  remaining: number;
+}
+
+interface VerifiedBonuses {
+  bonusClick: number;
+  bonusPassive: number;
+  hasCrown: boolean;
+  maxCombo: number;
+  activeBoost: ActiveBoost | null;
+  instantGoldPending: number;
+}
+
+function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: number): VerifiedBonuses {
   let bonusClick = 0;
   let bonusPassive = 0;
   let hasCrown = false;
   let maxCombo = 10;
-  let activeBoost: { multiplier: number; endTime: number; remaining: number } | null = null;
+  let activeBoost: ActiveBoost | null = null;
   let instantGoldPending = 0;
 
   purchases.forEach(purchase => {
