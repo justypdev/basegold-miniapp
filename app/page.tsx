@@ -912,25 +912,12 @@ export default function MinerGame() {
     // Refresh burn stats
     setTimeout(() => fetchUserBurnStats(), 3000);
     
-    setPurchaseSuccess(true);
+    // Close the selected item and show success
+    setSelectedItem(null);
     setProcessingPurchase(false);
-    setTimeout(() => setPurchaseSuccess(false), 3000);
+    setPurchaseSuccess(true);
+    setTimeout(() => setPurchaseSuccess(false), 4000);
   }, [goldPerSecond, fetchUserBurnStats]);
-
-  // Handle transaction status change
-  const handleTransactionStatus = useCallback((status: { statusName: string; statusData?: any }, item: typeof SHOP_ITEMS[0]) => {
-    console.log('📝 Transaction status:', status.statusName, 'for', item.id);
-    
-    if (status.statusName === 'transactionPending') {
-      setProcessingPurchase(true);
-    } else if (status.statusName === 'success') {
-      console.log('✅ Transaction successful! Applying effect...');
-      applyPurchaseEffect(item);
-    } else if (status.statusName === 'error') {
-      console.log('❌ Transaction failed');
-      setProcessingPurchase(false);
-    }
-  }, [applyPurchaseEffect]);
 
   const formatNumber = (num: number) => {
     if (num >= 1e9) return (num / 1e9).toFixed(1) + 'B';
@@ -1305,12 +1292,14 @@ export default function MinerGame() {
             )}
 
             {purchaseSuccess && (
-              <div className="mb-4 p-3 bg-green-500/20 border border-green-500 rounded-lg text-center">
-                <span className="text-green-400">✅ Purchase complete! Effect applied & BG burned! 🔥</span>
+              <div className="mb-4 p-4 bg-green-500/20 border-2 border-green-500 rounded-xl text-center animate-pulse">
+                <div className="text-2xl mb-1">🎉</div>
+                <span className="text-green-400 font-bold">Purchase Complete!</span>
+                <div className="text-green-300 text-sm">Effect applied & BG burned! 🔥</div>
               </div>
             )}
 
-            {processingPurchase && (
+            {processingPurchase && !purchaseSuccess && (
               <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500 rounded-lg text-center">
                 <span className="text-yellow-400">⏳ Processing transaction...</span>
               </div>
@@ -1355,7 +1344,20 @@ export default function MinerGame() {
                         <Transaction
                           chainId={base.id}
                           calls={buildPurchaseCalls(item.priceETH)}
-                          onStatus={(status) => handleTransactionStatus(status, item)}
+                          onSuccess={() => {
+                            console.log('✅ onSuccess fired for:', item.id);
+                            applyPurchaseEffect(item);
+                          }}
+                          onError={(error) => {
+                            console.log('❌ onError fired:', error);
+                            setProcessingPurchase(false);
+                          }}
+                          onStatus={(status) => {
+                            console.log('📝 onStatus:', status.statusName);
+                            if (status.statusName === 'transactionPending') {
+                              setProcessingPurchase(true);
+                            }
+                          }}
                         >
                           <TransactionButton 
                             text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
