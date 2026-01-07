@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { sdk } from '@farcaster/miniapp-sdk';
 import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient } from 'wagmi';
 import { 
@@ -123,7 +123,6 @@ const ROUTER_ABI = [
 ] as const;
 
 // ============ SHOP ITEMS (ETH prices) ============
-// Prices in ETH (approximate USD equivalents at ~$3000/ETH)
 
 const SHOP_ITEMS = [
   {
@@ -133,7 +132,7 @@ const SHOP_ITEMS = [
     priceETH: '0.00015',
     priceUSD: '~$0.50',
     emoji: '⚡',
-    effect: { type: 'boost', multiplier: 2, duration: 600000 }
+    effect: { type: 'boost' as const, multiplier: 2, duration: 600000 }
   },
   {
     id: 'time_warp',
@@ -142,7 +141,7 @@ const SHOP_ITEMS = [
     priceETH: '0.0003',
     priceUSD: '~$1.00',
     emoji: '⏰',
-    effect: { type: 'instant_gold', hours: 1 }
+    effect: { type: 'instant_gold' as const, hours: 1 }
   },
   {
     id: 'diamond_pickaxe',
@@ -151,7 +150,7 @@ const SHOP_ITEMS = [
     priceETH: '0.0006',
     priceUSD: '~$2.00',
     emoji: '💎',
-    effect: { type: 'permanent_click', amount: 10 }
+    effect: { type: 'permanent_click' as const, amount: 10 }
   },
   {
     id: 'auto_miner',
@@ -160,7 +159,7 @@ const SHOP_ITEMS = [
     priceETH: '0.0015',
     priceUSD: '~$5.00',
     emoji: '🤖',
-    effect: { type: 'permanent_passive', amount: 100 }
+    effect: { type: 'permanent_passive' as const, amount: 100 }
   },
   {
     id: 'golden_crown',
@@ -169,7 +168,7 @@ const SHOP_ITEMS = [
     priceETH: '0.001',
     priceUSD: '~$3.00',
     emoji: '👑',
-    effect: { type: 'cosmetic', maxCombo: 15 }
+    effect: { type: 'cosmetic' as const, maxCombo: 15 }
   },
   {
     id: 'burn_booster',
@@ -178,7 +177,7 @@ const SHOP_ITEMS = [
     priceETH: '0.0003',
     priceUSD: '~$1.00',
     emoji: '🔥',
-    effect: { type: 'burn_contribution', amount: 1 }
+    effect: { type: 'burn_contribution' as const, amount: 1 }
   },
 ];
 
@@ -292,6 +291,37 @@ const TIER_BORDERS = {
   legendary: 'border-purple-500',
 };
 
+// ============ HELPER: Calculate bonuses from premium purchases ============
+
+function calculatePremiumBonuses(purchases: Record<string, number>) {
+  let bonusClick = 0;
+  let bonusPassive = 0;
+  let hasCrown = false;
+  let maxCombo = 10;
+
+  Object.entries(purchases).forEach(([itemId, count]) => {
+    const item = SHOP_ITEMS.find(i => i.id === itemId);
+    if (!item) return;
+
+    for (let i = 0; i < count; i++) {
+      switch (item.effect.type) {
+        case 'permanent_click':
+          bonusClick += item.effect.amount || 10;
+          break;
+        case 'permanent_passive':
+          bonusPassive += item.effect.amount || 100;
+          break;
+        case 'cosmetic':
+          hasCrown = true;
+          maxCombo = item.effect.maxCombo || 15;
+          break;
+      }
+    }
+  });
+
+  return { bonusClick, bonusPassive, hasCrown, maxCombo };
+}
+
 // ============ BURN NOTIFICATION COMPONENT ============
 
 function BurnNotification({ burn, onComplete }: { burn: { amount: string; buyer: string }; onComplete: () => void }) {
@@ -346,6 +376,7 @@ function AchievementNotification({ achievement, onComplete }: { achievement: Ach
 
 export default function MinerGame() {
   const [isReady, setIsReady] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
   
   // Wallet
   const { address, isConnected } = useAccount();
@@ -383,26 +414,35 @@ export default function MinerGame() {
     functionName: 'getBurnStats',
   });
 
-  // Game state
+  // Game state - BASE values (before premium bonuses)
   const [gold, setGold] = useState(0);
-  const [goldPerClick, setGoldPerClick] = useState(1);
-  const [goldPerSecond, setGoldPerSecond] = useState(0);
+  const [baseGoldPerClick, setBaseGoldPerClick] = useState(1); // From upgrades only
+  const [baseGoldPerSecond, setBaseGoldPerSecond] = useState(0); // From upgrades only
   const [totalClicks, setTotalClicks] = useState(0);
   const [combo, setCombo] = useState(1);
-  const [maxCombo, setMaxCombo] = useState(10);
   const [lastClickTime, setLastClickTime] = useState(0);
   const [upgrades, setUpgrades] = useState(INITIAL_UPGRADES);
   const [clickMultiplier, setClickMultiplier] = useState(1);
   const [boostEndTime, setBoostEndTime] = useState<number | null>(null);
-  const [hasCrown, setHasCrown] = useState(false);
+  
+  // Premium purchases tracking
+  const [premiumPurchases, setPremiumPurchases] = useState<Record<string, number>>({});
+  
+  // Calculate actual values including premium bonuses
+  const premiumBonuses = useMemo(() => calculatePremiumBonuses(premiumPurchases), [premiumPurchases]);
+  const goldPerClick = baseGoldPerClick + premiumBonuses.bonusClick;
+  const goldPerSecond = baseGoldPerSecond + premiumBonuses.bonusPassive;
+  const hasCrown = premiumBonuses.hasCrown;
+  const maxCombo = premiumBonuses.maxCombo;
   
   // UI state
   const [activeTab, setActiveTab] = useState<'game' | 'shop' | 'buy' | 'achievements' | 'leaderboard' | 'stats'>('game');
   const [floatingTexts, setFloatingTexts] = useState<Array<{id: number, text: string, x: number, y: number}>>([]);
   const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
   const [purchaseSuccess, setPurchaseSuccess] = useState(false);
+  const [processingPurchase, setProcessingPurchase] = useState(false);
   
-  // Buy BG state (for future use in shop)
+  // Buy BG state
   const [buyAmount, setBuyAmount] = useState('');
   const [buyToken, setBuyToken] = useState<'ETH' | 'USDC'>('ETH');
   
@@ -422,10 +462,14 @@ export default function MinerGame() {
   const [unlockedAchievements, setUnlockedAchievements] = useState<Set<string>>(new Set());
   const [achievementNotifications, setAchievementNotifications] = useState<Achievement[]>([]);
   const [achievementCategory, setAchievementCategory] = useState<'all' | 'mining' | 'burning' | 'shopping' | 'mastery'>('all');
-  const [totalPurchases, setTotalPurchases] = useState(0);
   const [userBurnCount, setUserBurnCount] = useState(0);
   const [userBurnAmount, setUserBurnAmount] = useState(0);
   const [highestCombo, setHighestCombo] = useState(1);
+
+  // Total purchases count
+  const totalPurchases = useMemo(() => {
+    return Object.values(premiumPurchases).reduce((sum, count) => sum + count, 0);
+  }, [premiumPurchases]);
 
   // Watch for InstantBurn events (real-time!)
   useWatchContractEvent({
@@ -465,7 +509,6 @@ export default function MinerGame() {
         toBlock: 'latest',
       });
 
-      // Aggregate by address
       const burnsByAddress: Record<string, { totalBurned: number; burnCount: number }> = {};
       
       logs.forEach((log: any) => {
@@ -479,7 +522,6 @@ export default function MinerGame() {
         burnsByAddress[buyer].burnCount += 1;
       });
 
-      // Convert to array and sort
       const leaderboard: BurnEntry[] = Object.entries(burnsByAddress)
         .map(([address, data]) => ({
           address,
@@ -487,7 +529,7 @@ export default function MinerGame() {
           burnCount: data.burnCount,
         }))
         .sort((a, b) => b.totalBurned - a.totalBurned)
-        .slice(0, 50); // Top 50
+        .slice(0, 50);
 
       setBurnLeaderboard(leaderboard);
     } catch (error) {
@@ -496,7 +538,7 @@ export default function MinerGame() {
     setLoadingLeaderboard(false);
   }, [publicClient]);
 
-  // Load points leaderboard from localStorage (shared via simple API later)
+  // Load points leaderboard
   const loadPointsLeaderboard = useCallback(() => {
     try {
       const saved = localStorage.getItem('basegold-points-leaderboard');
@@ -517,7 +559,6 @@ export default function MinerGame() {
       const saved = localStorage.getItem('basegold-points-leaderboard');
       let leaderboard: PointsEntry[] = saved ? JSON.parse(saved) : [];
       
-      // Update or add entry
       const existingIndex = leaderboard.findIndex(e => e.address.toLowerCase() === address.toLowerCase());
       const newEntry: PointsEntry = {
         address,
@@ -528,7 +569,6 @@ export default function MinerGame() {
       };
       
       if (existingIndex >= 0) {
-        // Only update if new score is higher
         if (gold > leaderboard[existingIndex].gold) {
           leaderboard[existingIndex] = newEntry;
         }
@@ -536,7 +576,6 @@ export default function MinerGame() {
         leaderboard.push(newEntry);
       }
       
-      // Sort and save
       leaderboard = leaderboard.sort((a, b) => b.gold - a.gold).slice(0, 100);
       localStorage.setItem('basegold-points-leaderboard', JSON.stringify(leaderboard));
       setPointsLeaderboard(leaderboard.slice(0, 50));
@@ -575,7 +614,6 @@ export default function MinerGame() {
       if (saved) {
         const data = JSON.parse(saved);
         setUnlockedAchievements(new Set(data.unlocked || []));
-        setTotalPurchases(data.totalPurchases || 0);
         setHighestCombo(data.highestCombo || 1);
       }
     } catch {}
@@ -583,12 +621,12 @@ export default function MinerGame() {
 
   // Save achievements
   useEffect(() => {
+    if (!dataLoaded) return;
     localStorage.setItem('basegold-achievements', JSON.stringify({
       unlocked: Array.from(unlockedAchievements),
-      totalPurchases,
       highestCombo,
     }));
-  }, [unlockedAchievements, totalPurchases, highestCombo]);
+  }, [unlockedAchievements, highestCombo, dataLoaded]);
 
   // Fetch user's burn stats from blockchain
   const fetchUserBurnStats = useCallback(async () => {
@@ -627,6 +665,8 @@ export default function MinerGame() {
 
   // Check and unlock achievements
   const checkAchievements = useCallback(() => {
+    if (!dataLoaded) return;
+    
     const newUnlocks: Achievement[] = [];
     
     ACHIEVEMENTS.forEach(achievement => {
@@ -636,7 +676,6 @@ export default function MinerGame() {
       
       switch (achievement.requirement.type) {
         case 'clicks':
-          // Special handling for mastery achievements
           if (achievement.id === 'achievement_hunter') {
             unlocked = unlockedAchievements.size >= 10;
           } else if (achievement.id === 'completionist') {
@@ -682,14 +721,13 @@ export default function MinerGame() {
         return updated;
       });
       
-      // Queue notifications
       newUnlocks.forEach((achievement, index) => {
         setTimeout(() => {
           setAchievementNotifications(prev => [...prev, achievement]);
         }, index * 1500);
       });
     }
-  }, [gold, totalClicks, goldPerSecond, highestCombo, totalUpgradesOwned, userBurnCount, userBurnAmount, totalPurchases, unlockedAchievements]);
+  }, [gold, totalClicks, goldPerSecond, highestCombo, totalUpgradesOwned, userBurnCount, userBurnAmount, totalPurchases, unlockedAchievements, dataLoaded]);
 
   // Check achievements when relevant values change
   useEffect(() => {
@@ -732,28 +770,40 @@ export default function MinerGame() {
     init();
   }, []);
 
-  // Load/save game
+  // Load game state from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('basegold-miner-v2');
+    const saved = localStorage.getItem('basegold-miner-v3');
     if (saved) {
       try {
         const data = JSON.parse(saved);
         setGold(data.gold || 0);
-        setGoldPerClick(data.goldPerClick || 1);
-        setGoldPerSecond(data.goldPerSecond || 0);
+        setBaseGoldPerClick(data.baseGoldPerClick || 1);
+        setBaseGoldPerSecond(data.baseGoldPerSecond || 0);
         setTotalClicks(data.totalClicks || 0);
-        setMaxCombo(data.maxCombo || 10);
-        setHasCrown(data.hasCrown || false);
+        setPremiumPurchases(data.premiumPurchases || {});
         if (data.upgrades) setUpgrades(prev => ({ ...prev, ...data.upgrades }));
-      } catch {}
+        console.log('Loaded game state:', data);
+      } catch (e) {
+        console.error('Error loading game state:', e);
+      }
     }
+    setDataLoaded(true);
   }, []);
 
+  // Save game state to localStorage
   useEffect(() => {
-    localStorage.setItem('basegold-miner-v2', JSON.stringify({
-      gold, goldPerClick, goldPerSecond, totalClicks, maxCombo, hasCrown, upgrades
-    }));
-  }, [gold, goldPerClick, goldPerSecond, totalClicks, maxCombo, hasCrown, upgrades]);
+    if (!dataLoaded) return;
+    const saveData = {
+      gold,
+      baseGoldPerClick,
+      baseGoldPerSecond,
+      totalClicks,
+      premiumPurchases,
+      upgrades,
+    };
+    localStorage.setItem('basegold-miner-v3', JSON.stringify(saveData));
+    console.log('Saved game state:', saveData);
+  }, [gold, baseGoldPerClick, baseGoldPerSecond, totalClicks, premiumPurchases, upgrades, dataLoaded]);
 
   // Passive income
   useEffect(() => {
@@ -812,41 +862,75 @@ export default function MinerGame() {
         ...prev,
         [key]: { ...prev[key], owned: prev[key].owned + 1, cost: Math.floor(prev[key].cost * prev[key].multiplier) }
       }));
-      setGoldPerClick(prev => prev + upgrade.perClick);
-      setGoldPerSecond(prev => prev + upgrade.perSec);
+      setBaseGoldPerClick(prev => prev + upgrade.perClick);
+      setBaseGoldPerSecond(prev => prev + upgrade.perSec);
     }
   };
 
-  // Apply purchase effect
-  const applyPurchaseEffect = (item: typeof SHOP_ITEMS[0]) => {
+  // Apply purchase effect - called when transaction succeeds
+  const applyPurchaseEffect = useCallback((item: typeof SHOP_ITEMS[0]) => {
+    console.log('🎮 Applying purchase effect for:', item.id, item.name);
     const effect = item.effect;
+    
+    // Always track the purchase first
+    setPremiumPurchases(prev => {
+      const updated = {
+        ...prev,
+        [item.id]: (prev[item.id] || 0) + 1
+      };
+      console.log('📦 Updated premium purchases:', updated);
+      return updated;
+    });
+    
+    // Apply immediate effects (non-permanent ones)
     switch (effect.type) {
       case 'boost':
+        console.log('⚡ Applying boost:', effect.multiplier, 'for', effect.duration, 'ms');
         setClickMultiplier(effect.multiplier || 2);
         setBoostEndTime(Date.now() + (effect.duration || 600000));
         break;
       case 'instant_gold':
-        setGold(prev => prev + (goldPerSecond * 3600 * (effect.hours || 1)));
+        const instantGold = goldPerSecond * 3600 * (effect.hours || 1);
+        console.log('💰 Adding instant gold:', instantGold);
+        setGold(prev => prev + instantGold);
         break;
+      // permanent_click, permanent_passive, and cosmetic are handled via premiumBonuses calculation
       case 'permanent_click':
-        setGoldPerClick(prev => prev + (effect.amount || 10));
+        console.log('💎 Permanent click bonus will be applied via premium bonuses');
         break;
       case 'permanent_passive':
-        setGoldPerSecond(prev => prev + (effect.amount || 100));
+        console.log('🤖 Permanent passive bonus will be applied via premium bonuses');
         break;
       case 'cosmetic':
-        setHasCrown(true);
-        setMaxCombo(effect.maxCombo || 15);
+        console.log('👑 Crown unlocked via premium bonuses');
+        break;
+      case 'burn_contribution':
+        console.log('🔥 Burn contribution recorded');
         break;
     }
-    // Track purchase for achievements
-    setTotalPurchases(prev => prev + 1);
-    // Refresh burn stats (purchase triggers burn)
+    
+    // Refresh burn stats
     setTimeout(() => fetchUserBurnStats(), 3000);
     
     setPurchaseSuccess(true);
+    setProcessingPurchase(false);
     setTimeout(() => setPurchaseSuccess(false), 3000);
-  };
+  }, [goldPerSecond, fetchUserBurnStats]);
+
+  // Handle transaction status change
+  const handleTransactionStatus = useCallback((status: { statusName: string; statusData?: any }, item: typeof SHOP_ITEMS[0]) => {
+    console.log('📝 Transaction status:', status.statusName, 'for', item.id);
+    
+    if (status.statusName === 'transactionPending') {
+      setProcessingPurchase(true);
+    } else if (status.statusName === 'success') {
+      console.log('✅ Transaction successful! Applying effect...');
+      applyPurchaseEffect(item);
+    } else if (status.statusName === 'error') {
+      console.log('❌ Transaction failed');
+      setProcessingPurchase(false);
+    }
+  }, [applyPurchaseEffect]);
 
   const formatNumber = (num: number) => {
     if (num >= 1e9) return (num / 1e9).toFixed(1) + 'B';
@@ -921,7 +1005,7 @@ export default function MinerGame() {
     }
   };
 
-  // Parse burn stats (now returns ETH received, not USDC)
+  // Parse burn stats
   const burnStatsArray = burnStats as [bigint, bigint, bigint] | undefined;
   const lifetimeEthBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[0], 18)) : 0;
   const lifetimeBgBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[1], 18)) : 0;
@@ -994,7 +1078,7 @@ export default function MinerGame() {
         </div>
       </div>
 
-      {/* Your BG Balance Display - Always Visible */}
+      {/* Your BG Balance Display */}
       <div className="bg-gradient-to-r from-[#D4AF37]/10 via-[#996515]/10 to-[#D4AF37]/10 border-b border-[#D4AF37]/30 py-3 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-3">
@@ -1027,7 +1111,7 @@ export default function MinerGame() {
         )}
       </div>
 
-      {/* Your ETH Balance Display - For Shop Purchases */}
+      {/* Your ETH Balance Display */}
       <div className="bg-gradient-to-r from-[#627EEA]/10 via-[#3C4C8C]/10 to-[#627EEA]/10 border-b border-[#627EEA]/30 py-2 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-3">
@@ -1111,6 +1195,17 @@ export default function MinerGame() {
                 <div className="text-[10px] text-gray-500">COMBO</div>
               </div>
             </div>
+
+            {/* Premium Bonuses Display */}
+            {(premiumBonuses.bonusClick > 0 || premiumBonuses.bonusPassive > 0) && (
+              <div className="mb-4 p-2 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                <div className="text-xs text-purple-400 text-center">
+                  💎 Premium Bonuses: 
+                  {premiumBonuses.bonusClick > 0 && ` +${premiumBonuses.bonusClick}/click`}
+                  {premiumBonuses.bonusPassive > 0 && ` +${premiumBonuses.bonusPassive}/sec`}
+                </div>
+              </div>
+            )}
 
             {/* Boost */}
             {boostEndTime && (
@@ -1209,73 +1304,73 @@ export default function MinerGame() {
               </div>
             )}
 
-            {isConnected && !ethBalance && (
-              <div className="mb-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs text-orange-400">💵 You need ETH to buy items</span>
-                  <a
-                    href="https://bridge.base.org/"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="px-3 py-1 bg-[#627EEA] text-white text-xs font-medium rounded hover:bg-[#627EEA]/80"
-                  >
-                    Get ETH
-                  </a>
-                </div>
+            {purchaseSuccess && (
+              <div className="mb-4 p-3 bg-green-500/20 border border-green-500 rounded-lg text-center">
+                <span className="text-green-400">✅ Purchase complete! Effect applied & BG burned! 🔥</span>
               </div>
             )}
 
-            {purchaseSuccess && (
-              <div className="mb-4 p-3 bg-green-500/20 border border-green-500 rounded-lg text-center">
-                <span className="text-green-400">✓ Purchase complete! BG burned instantly! 🔥</span>
+            {processingPurchase && (
+              <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500 rounded-lg text-center">
+                <span className="text-yellow-400">⏳ Processing transaction...</span>
               </div>
             )}
 
             <div className="space-y-2">
-              {SHOP_ITEMS.map(item => (
-                <div key={item.id}>
-                  <button
-                    onClick={() => setSelectedItem(selectedItem?.id === item.id ? null : item)}
-                    className={`w-full p-3 rounded-xl border transition-all text-left
-                      ${selectedItem?.id === item.id 
-                        ? 'bg-[#627EEA]/20 border-[#627EEA]' 
-                        : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'}`}
-                  >
-                    <div className="flex justify-between items-start">
-                      <div className="flex items-center gap-2">
-                        <span className="text-2xl">{item.emoji}</span>
-                        <div>
-                          <div className="font-medium text-sm">{item.name}</div>
-                          <div className="text-xs text-gray-400">{item.description}</div>
+              {SHOP_ITEMS.map(item => {
+                const purchaseCount = premiumPurchases[item.id] || 0;
+                return (
+                  <div key={item.id}>
+                    <button
+                      onClick={() => setSelectedItem(selectedItem?.id === item.id ? null : item)}
+                      className={`w-full p-3 rounded-xl border transition-all text-left
+                        ${selectedItem?.id === item.id 
+                          ? 'bg-[#627EEA]/20 border-[#627EEA]' 
+                          : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'}`}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-2">
+                          <span className="text-2xl">{item.emoji}</span>
+                          <div>
+                            <div className="font-medium text-sm flex items-center gap-2">
+                              {item.name}
+                              {purchaseCount > 0 && (
+                                <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded">
+                                  x{purchaseCount}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-xs text-gray-400">{item.description}</div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-[#627EEA] font-bold">{item.priceETH} ETH</div>
+                          <div className="text-xs text-gray-500">{item.priceUSD}</div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-[#627EEA] font-bold">{item.priceETH} ETH</div>
-                        <div className="text-xs text-gray-500">{item.priceUSD}</div>
+                    </button>
+                    
+                    {selectedItem?.id === item.id && isConnected && (
+                      <div className="mt-2 p-2 bg-black/50 rounded-lg">
+                        <Transaction
+                          chainId={base.id}
+                          calls={buildPurchaseCalls(item.priceETH)}
+                          onStatus={(status) => handleTransactionStatus(status, item)}
+                        >
+                          <TransactionButton 
+                            text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
+                            className="w-full py-2 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
+                          />
+                          <TransactionStatus>
+                            <TransactionStatusLabel />
+                            <TransactionStatusAction />
+                          </TransactionStatus>
+                        </Transaction>
                       </div>
-                    </div>
-                  </button>
-                  
-                  {selectedItem?.id === item.id && isConnected && (
-                    <div className="mt-2 p-2 bg-black/50 rounded-lg">
-                      <Transaction
-                        chainId={base.id}
-                        calls={buildPurchaseCalls(item.priceETH)}
-                        onSuccess={() => applyPurchaseEffect(item)}
-                      >
-                        <TransactionButton 
-                          text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
-                          className="w-full py-2 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
-                        />
-                        <TransactionStatus>
-                          <TransactionStatusLabel />
-                          <TransactionStatusAction />
-                        </TransactionStatus>
-                      </Transaction>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                );
+              })}
             </div>
 
             {!isConnected && (
@@ -1319,22 +1414,10 @@ export default function MinerGame() {
               </div>
             </div>
 
-            {/* Why Buy BG */}
-            <div className="mb-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
-              <div className="flex items-start gap-2">
-                <span className="text-lg">🔥</span>
-                <div className="text-xs text-orange-200">
-                  <strong>Deflationary by design:</strong> Every shop purchase burns BG forever, 
-                  making your holdings more scarce. Only {(INITIAL_SUPPLY - totalBurned).toFixed(2)} BG remain!
-                </div>
-              </div>
-            </div>
-
             {/* DEX Options */}
             <h3 className="text-sm font-medium text-gray-300 mb-3">Choose an Exchange:</h3>
             
             <div className="space-y-2">
-              {/* Aerodrome - Primary */}
               <a
                 href="https://aerodrome.finance/swap?from=eth&to=0x36b712A629095234F2196BbB000D1b96C12Ce78e"
                 target="_blank"
@@ -1343,9 +1426,7 @@ export default function MinerGame() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-xl">
-                      🔵
-                    </div>
+                    <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-xl">🔵</div>
                     <div>
                       <div className="font-medium text-white">Aerodrome</div>
                       <div className="text-xs text-gray-400">Recommended • Best liquidity</div>
@@ -1355,7 +1436,6 @@ export default function MinerGame() {
                 </div>
               </a>
 
-              {/* Uniswap */}
               <a
                 href="https://app.uniswap.org/swap?outputCurrency=0x36b712A629095234F2196BbB000D1b96C12Ce78e&chain=base"
                 target="_blank"
@@ -1364,9 +1444,7 @@ export default function MinerGame() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-pink-500/20 flex items-center justify-center text-xl">
-                      🦄
-                    </div>
+                    <div className="w-10 h-10 rounded-full bg-pink-500/20 flex items-center justify-center text-xl">🦄</div>
                     <div>
                       <div className="font-medium text-white">Uniswap</div>
                       <div className="text-xs text-gray-400">Popular DEX</div>
@@ -1376,70 +1454,6 @@ export default function MinerGame() {
                 </div>
               </a>
 
-              {/* SushiSwap */}
-              <a
-                href="https://www.sushi.com/swap?chainId=8453&token1=0x36b712A629095234F2196BbB000D1b96C12Ce78e"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block p-4 bg-purple-500/10 border border-purple-500/30 rounded-xl hover:bg-purple-500/20 transition-all"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center text-xl">
-                      🍣
-                    </div>
-                    <div>
-                      <div className="font-medium text-white">SushiSwap</div>
-                      <div className="text-xs text-gray-400">Multi-chain DEX</div>
-                    </div>
-                  </div>
-                  <div className="text-purple-400 text-sm">Swap →</div>
-                </div>
-              </a>
-
-              {/* PancakeSwap */}
-              <a
-                href="https://pancakeswap.finance/swap?outputCurrency=0x36b712A629095234F2196BbB000D1b96C12Ce78e&chain=base"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl hover:bg-yellow-500/20 transition-all"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center text-xl">
-                      🥞
-                    </div>
-                    <div>
-                      <div className="font-medium text-white">PancakeSwap</div>
-                      <div className="text-xs text-gray-400">Low fees</div>
-                    </div>
-                  </div>
-                  <div className="text-yellow-400 text-sm">Swap →</div>
-                </div>
-              </a>
-
-              {/* Matcha / 0x */}
-              <a
-                href="https://matcha.xyz/tokens/base/0x36b712a629095234f2196bbb000d1b96c12ce78e"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="block p-4 bg-green-500/10 border border-green-500/30 rounded-xl hover:bg-green-500/20 transition-all"
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center text-xl">
-                      🍵
-                    </div>
-                    <div>
-                      <div className="font-medium text-white">Matcha</div>
-                      <div className="text-xs text-gray-400">DEX Aggregator • Best rates</div>
-                    </div>
-                  </div>
-                  <div className="text-green-400 text-sm">Swap →</div>
-                </div>
-              </a>
-
-              {/* DexScreener */}
               <a
                 href="https://dexscreener.com/base/0x36b712A629095234F2196BbB000D1b96C12Ce78e"
                 target="_blank"
@@ -1448,9 +1462,7 @@ export default function MinerGame() {
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-gray-500/20 flex items-center justify-center text-xl">
-                      📊
-                    </div>
+                    <div className="w-10 h-10 rounded-full bg-gray-500/20 flex items-center justify-center text-xl">📊</div>
                     <div>
                       <div className="font-medium text-white">DexScreener</div>
                       <div className="text-xs text-gray-400">View chart & all pools</div>
@@ -1479,53 +1491,6 @@ export default function MinerGame() {
                 </button>
               </div>
             </div>
-
-            {/* Get ETH Section */}
-            <div className="mt-4 p-4 bg-[#627EEA]/10 border border-[#627EEA]/30 rounded-xl">
-              <h3 className="text-sm font-medium text-[#627EEA] mb-2">⚡ Need ETH for Shop?</h3>
-              <p className="text-xs text-gray-400 mb-3">
-                ETH is required to buy premium items. Get ETH on Base:
-              </p>
-              <div className="space-y-2">
-                <a
-                  href="https://www.coinbase.com/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between p-3 bg-[#0052FF]/20 border border-[#0052FF]/30 rounded-lg hover:bg-[#0052FF]/30 transition-all"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">🔵</span>
-                    <div>
-                      <div className="text-sm font-medium text-white">Coinbase</div>
-                      <div className="text-xs text-gray-400">Buy with card/bank</div>
-                    </div>
-                  </div>
-                  <span className="text-[#0052FF] text-xs">Get ETH →</span>
-                </a>
-                <a
-                  href="https://bridge.base.org/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between p-3 bg-white/5 border border-white/10 rounded-lg hover:bg-white/10 transition-all"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">🌉</span>
-                    <div>
-                      <div className="text-sm font-medium text-white">Bridge to Base</div>
-                      <div className="text-xs text-gray-400">From Ethereum/other chains</div>
-                    </div>
-                  </div>
-                  <span className="text-gray-400 text-xs">Bridge →</span>
-                </a>
-              </div>
-            </div>
-
-            {!isConnected && (
-              <div className="mt-4 text-center">
-                <p className="text-gray-400 text-sm mb-2">Connect wallet to see your balance</p>
-                <Wallet><ConnectWallet /></Wallet>
-              </div>
-            )}
           </>
         )}
 
@@ -1557,20 +1522,21 @@ export default function MinerGame() {
                   style={{ width: `${(achievementScore / maxAchievementScore) * 100}%` }}
                 />
               </div>
-              <div className="text-xs text-gray-500 text-right mt-1">
-                {achievementScore} / {maxAchievementScore} points
-              </div>
             </div>
 
-            {/* Your Burn Stats */}
-            {isConnected && (
-              <div className="mb-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Your Burns:</span>
-                  <span className="text-orange-400 font-bold">{userBurnCount} burns ({userBurnAmount.toFixed(6)} BG)</span>
+            {/* Your Stats */}
+            <div className="mb-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-400">Shop Purchases:</span>
+                  <span className="text-purple-400 font-bold">{totalPurchases}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">BG Burned:</span>
+                  <span className="text-orange-400 font-bold">{userBurnAmount.toFixed(6)}</span>
                 </div>
               </div>
-            )}
+            </div>
 
             {/* Category Filter */}
             <div className="flex gap-1 mb-4 overflow-x-auto pb-2">
@@ -1602,55 +1568,10 @@ export default function MinerGame() {
                   const aUnlocked = unlockedAchievements.has(a.id);
                   const bUnlocked = unlockedAchievements.has(b.id);
                   if (aUnlocked !== bUnlocked) return bUnlocked ? 1 : -1;
-                  const tierOrder = ['bronze', 'silver', 'gold', 'diamond', 'legendary'];
-                  return tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier);
+                  return 0;
                 })
                 .map(achievement => {
                   const isUnlocked = unlockedAchievements.has(achievement.id);
-                  
-                  let progress = 0;
-                  let progressMax = achievement.requirement.value;
-                  let progressText = '';
-                  
-                  if (!isUnlocked) {
-                    switch (achievement.requirement.type) {
-                      case 'clicks':
-                        progress = totalClicks;
-                        progressText = `${totalClicks.toLocaleString()} / ${progressMax.toLocaleString()} clicks`;
-                        break;
-                      case 'gold':
-                        progress = gold;
-                        progressText = `${formatNumber(gold)} / ${formatNumber(progressMax)} gold`;
-                        break;
-                      case 'goldPerSec':
-                        progress = goldPerSecond;
-                        progressText = `${goldPerSecond} / ${progressMax} gold/sec`;
-                        break;
-                      case 'combo':
-                        progress = highestCombo;
-                        progressText = `${highestCombo}x / ${progressMax}x combo`;
-                        break;
-                      case 'upgrades':
-                        progress = totalUpgradesOwned;
-                        progressText = `${totalUpgradesOwned} / ${progressMax} upgrades`;
-                        break;
-                      case 'burns':
-                        progress = userBurnCount;
-                        progressText = `${userBurnCount} / ${progressMax} burns`;
-                        break;
-                      case 'burnAmount':
-                        progress = userBurnAmount;
-                        progressText = `${userBurnAmount.toFixed(6)} / ${progressMax} BG`;
-                        break;
-                      case 'purchases':
-                        progress = totalPurchases;
-                        progressText = `${totalPurchases} / ${progressMax} purchases`;
-                        break;
-                    }
-                  }
-                  
-                  const progressPercent = Math.min((progress / progressMax) * 100, 100);
-                  const isMasteryAchievement = ['achievement_hunter', 'completionist', 'true_master'].includes(achievement.id);
                   
                   return (
                     <div 
@@ -1674,18 +1595,6 @@ export default function MinerGame() {
                           <div className={`text-xs ${isUnlocked ? 'text-white/80' : 'text-gray-500'}`}>
                             {achievement.description}
                           </div>
-                          
-                          {!isUnlocked && !isMasteryAchievement && (
-                            <div className="mt-2">
-                              <div className="h-1.5 bg-black/30 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full bg-gradient-to-r ${TIER_COLORS[achievement.tier]} transition-all`}
-                                  style={{ width: `${progressPercent}%` }}
-                                />
-                              </div>
-                              <div className="text-[10px] text-gray-500 mt-0.5">{progressText}</div>
-                            </div>
-                          )}
                         </div>
                         <div className="text-right">
                           <div className={`text-xs font-bold ${isUnlocked ? 'text-white' : 'text-gray-500'}`}>
@@ -1700,13 +1609,6 @@ export default function MinerGame() {
                   );
                 })}
             </div>
-            
-            {!isConnected && (
-              <div className="mt-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg text-center">
-                <p className="text-orange-400 text-sm mb-2">🔥 Connect wallet to track burn achievements!</p>
-                <Wallet><ConnectWallet /></Wallet>
-              </div>
-            )}
           </>
         )}
 
@@ -1718,7 +1620,6 @@ export default function MinerGame() {
               <p className="text-xs text-gray-400">Top miners and burners</p>
             </div>
 
-            {/* Leaderboard Type Toggle */}
             <div className="flex gap-2 mb-4">
               <button
                 onClick={() => setLeaderboardTab('burns')}
@@ -1740,27 +1641,20 @@ export default function MinerGame() {
               </button>
             </div>
 
-            {/* Burn Leaderboard */}
             {leaderboardTab === 'burns' && (
               <div className="space-y-2">
-                <div className="flex justify-between text-xs text-gray-500 px-3 mb-2">
-                  <span>RANK / ADDRESS</span>
-                  <span>BG BURNED</span>
-                </div>
-                
                 {loadingLeaderboard ? (
                   <div className="text-center py-8 text-gray-400">
                     <div className="animate-spin text-2xl mb-2">🔥</div>
-                    Loading burns from blockchain...
+                    Loading...
                   </div>
                 ) : burnLeaderboard.length === 0 ? (
                   <div className="text-center py-8 text-gray-400">
                     <div className="text-4xl mb-2">🔥</div>
                     <p>No burns yet!</p>
-                    <p className="text-xs mt-1">Be the first to burn BG</p>
                   </div>
                 ) : (
-                  burnLeaderboard.map((entry, index) => (
+                  burnLeaderboard.slice(0, 10).map((entry, index) => (
                     <div 
                       key={entry.address}
                       className={`flex justify-between items-center p-3 rounded-lg border
@@ -1775,42 +1669,21 @@ export default function MinerGame() {
                             index === 2 ? 'text-orange-400' : 'text-gray-500'}`}>
                           {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
                         </span>
-                        <div>
-                          <div className="font-mono text-sm">
-                            {entry.address.slice(0, 6)}...{entry.address.slice(-4)}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {entry.burnCount} burn{entry.burnCount !== 1 ? 's' : ''}
-                          </div>
+                        <div className="font-mono text-sm">
+                          {entry.address.slice(0, 6)}...{entry.address.slice(-4)}
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-orange-400 font-bold">
-                          {entry.totalBurned.toFixed(6)}
-                        </div>
-                        <div className="text-xs text-gray-500">BG</div>
+                      <div className="text-orange-400 font-bold">
+                        {entry.totalBurned.toFixed(6)} BG
                       </div>
                     </div>
                   ))
                 )}
-
-                <button
-                  onClick={fetchBurnLeaderboard}
-                  className="w-full mt-4 py-2 text-sm text-gray-400 hover:text-white bg-white/5 rounded-lg"
-                >
-                  🔄 Refresh
-                </button>
-
-                <p className="text-xs text-center text-gray-500 mt-2">
-                  📡 Live data from Base blockchain
-                </p>
               </div>
             )}
 
-            {/* Points Leaderboard */}
             {leaderboardTab === 'points' && (
               <div className="space-y-2">
-                {/* Submit Score Section */}
                 {isConnected && (
                   <div className="mb-4 p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-lg">
                     <div className="flex justify-between items-center mb-2">
@@ -1822,9 +1695,8 @@ export default function MinerGame() {
                         type="text"
                         value={playerName}
                         onChange={(e) => setPlayerName(e.target.value.slice(0, 20))}
-                        placeholder="Your name (optional)"
-                        className="flex-1 bg-black/50 border border-white/20 rounded px-2 py-1 text-sm
-                          focus:border-[#D4AF37] focus:outline-none"
+                        placeholder="Your name"
+                        className="flex-1 bg-black/50 border border-white/20 rounded px-2 py-1 text-sm"
                         maxLength={20}
                       />
                       <button
@@ -1832,31 +1704,22 @@ export default function MinerGame() {
                         disabled={gold < 100}
                         className={`px-4 py-1 rounded font-medium text-sm
                           ${gold >= 100 
-                            ? 'bg-[#D4AF37] text-black hover:bg-[#E5C048]' 
-                            : 'bg-gray-600 text-gray-400 cursor-not-allowed'}`}
+                            ? 'bg-[#D4AF37] text-black' 
+                            : 'bg-gray-600 text-gray-400'}`}
                       >
                         Submit
                       </button>
                     </div>
-                    {gold < 100 && (
-                      <p className="text-xs text-gray-500 mt-1">Need at least 100 gold to submit</p>
-                    )}
                   </div>
                 )}
 
-                <div className="flex justify-between text-xs text-gray-500 px-3 mb-2">
-                  <span>RANK / MINER</span>
-                  <span>GOLD</span>
-                </div>
-                
                 {pointsLeaderboard.length === 0 ? (
                   <div className="text-center py-8 text-gray-400">
                     <div className="text-4xl mb-2">⛏️</div>
                     <p>No scores yet!</p>
-                    <p className="text-xs mt-1">Start mining and submit your score</p>
                   </div>
                 ) : (
-                  pointsLeaderboard.map((entry, index) => (
+                  pointsLeaderboard.slice(0, 10).map((entry, index) => (
                     <div 
                       key={entry.address}
                       className={`flex justify-between items-center p-3 rounded-lg border
@@ -1871,37 +1734,11 @@ export default function MinerGame() {
                             index === 2 ? 'text-orange-400' : 'text-gray-500'}`}>
                           {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
                         </span>
-                        <div>
-                          <div className="font-medium text-sm">
-                            {entry.name}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {entry.totalClicks.toLocaleString()} clicks
-                          </div>
-                        </div>
+                        <div className="font-medium text-sm">{entry.name}</div>
                       </div>
-                      <div className="text-right">
-                        <div className="text-[#D4AF37] font-bold">
-                          {formatNumber(entry.gold)}
-                        </div>
-                        <div className="text-xs text-gray-500">gold</div>
-                      </div>
+                      <div className="text-[#D4AF37] font-bold">{formatNumber(entry.gold)}</div>
                     </div>
                   ))
-                )}
-
-                <button
-                  onClick={loadPointsLeaderboard}
-                  className="w-full mt-4 py-2 text-sm text-gray-400 hover:text-white bg-white/5 rounded-lg"
-                >
-                  🔄 Refresh
-                </button>
-
-                {!isConnected && (
-                  <div className="mt-4 text-center">
-                    <p className="text-gray-400 text-sm mb-2">Connect wallet to submit score</p>
-                    <Wallet><ConnectWallet /></Wallet>
-                  </div>
                 )}
               </div>
             )}
@@ -1916,39 +1753,32 @@ export default function MinerGame() {
               <p className="text-xs text-gray-400">Real-time deflationary metrics</p>
             </div>
 
-            {/* Big Burn Counter */}
             <div className="mb-6 p-6 bg-gradient-to-br from-orange-900/30 to-red-900/30 border border-orange-500/30 rounded-2xl text-center">
               <div className="text-5xl mb-2">🔥</div>
               <div className="text-3xl font-bold text-orange-400 font-mono">
                 {totalBurned.toFixed(4)}
               </div>
               <div className="text-gray-400">BG Burned Forever</div>
-              {lastBurnAmount && (
-                <div className="mt-2 text-sm text-green-400 animate-pulse">
-                  Last burn: +{parseFloat(lastBurnAmount).toFixed(6)} BG
-                </div>
-              )}
             </div>
 
-            {/* Stats Grid */}
             <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="bg-black/30 p-4 rounded-xl text-center">
                 <div className="text-2xl font-bold text-[#D4AF37]">
                   {(INITIAL_SUPPLY - totalBurned).toFixed(2)}
                 </div>
-                <div className="text-xs text-gray-500">Circulating Supply</div>
+                <div className="text-xs text-gray-500">Circulating</div>
               </div>
               <div className="bg-black/30 p-4 rounded-xl text-center">
                 <div className="text-2xl font-bold text-orange-400">
                   {((totalBurned / INITIAL_SUPPLY) * 100).toFixed(2)}%
                 </div>
-                <div className="text-xs text-gray-500">Total Burned</div>
+                <div className="text-xs text-gray-500">Burned</div>
               </div>
               <div className="bg-black/30 p-4 rounded-xl text-center">
                 <div className="text-2xl font-bold text-green-400">
                   {Math.round(21000000 / (INITIAL_SUPPLY - totalBurned)).toLocaleString()}x
                 </div>
-                <div className="text-xs text-gray-500">vs Bitcoin Scarcity</div>
+                <div className="text-xs text-gray-500">vs Bitcoin</div>
               </div>
               <div className="bg-black/30 p-4 rounded-xl text-center">
                 <div className="text-2xl font-bold text-blue-400">
@@ -1958,9 +1788,8 @@ export default function MinerGame() {
               </div>
             </div>
 
-            {/* Mini App Contribution */}
             <div className="bg-white/5 p-4 rounded-xl">
-              <h3 className="text-sm font-medium text-gray-300 mb-3">🎮 Mini App Burn Stats</h3>
+              <h3 className="text-sm font-medium text-gray-300 mb-3">🎮 Mini App Stats</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
                   <span className="text-gray-400">ETH Spent:</span>
@@ -1976,10 +1805,6 @@ export default function MinerGame() {
                 </div>
               </div>
             </div>
-
-            <p className="text-xs text-center text-gray-500 mt-4">
-              Data updates live from Base blockchain
-            </p>
           </>
         )}
       </main>
