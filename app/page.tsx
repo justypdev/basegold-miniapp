@@ -814,21 +814,21 @@ export default function MinerGame() {
     const effect = item.effect;
     switch (effect.type) {
       case 'boost':
-        setClickMultiplier(effect.multiplier);
-        setBoostEndTime(Date.now() + effect.duration);
+        setClickMultiplier(effect.multiplier || 2);
+        setBoostEndTime(Date.now() + (effect.duration || 600000));
         break;
       case 'instant_gold':
-        setGold(prev => prev + (goldPerSecond * 3600 * effect.hours));
+        setGold(prev => prev + (goldPerSecond * 3600 * (effect.hours || 1)));
         break;
       case 'permanent_click':
-        setGoldPerClick(prev => prev + effect.amount);
+        setGoldPerClick(prev => prev + (effect.amount || 10));
         break;
       case 'permanent_passive':
-        setGoldPerSecond(prev => prev + effect.amount);
+        setGoldPerSecond(prev => prev + (effect.amount || 100));
         break;
       case 'cosmetic':
         setHasCrown(true);
-        setMaxCombo(effect.maxCombo);
+        setMaxCombo(effect.maxCombo || 15);
         break;
     }
     // Track purchase for achievements
