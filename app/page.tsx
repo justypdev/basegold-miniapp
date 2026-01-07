@@ -692,7 +692,7 @@ export default function MinerGame() {
     } finally {
       setIsSaving(false);
     }
-  }, [address, signMessageAsync, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, goldPerSecond, lastClickTime]);
+  }, [address, signMessageAsync, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, lastClickTime]);
   
   // Auto-save reminder (prompts user to save periodically)
   const [showSaveReminder, setShowSaveReminder] = useState(false);
