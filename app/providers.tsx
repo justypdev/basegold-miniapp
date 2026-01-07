@@ -36,7 +36,6 @@ export function Providers({ children }: { children: ReactNode }) {
             },
             wallet: {
               display: 'modal',
-              preference: 'smartWalletOnly',
             },
           }}
         >
