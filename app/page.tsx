@@ -977,6 +977,7 @@ export default function MinerGame() {
         body: JSON.stringify({
           address,
           signature,
+          message,
           name,
           gold,
           totalClicks,
