@@ -945,7 +945,7 @@ export default function MinerGame() {
     
     try {
       // First, save the game to ensure server has latest state
-      await saveGameToServer(true);
+     await saveGameToServer();
       
       const timestamp = Date.now();
       const message = `BaseGold Leaderboard\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nTimestamp: ${timestamp}`;
