@@ -965,12 +965,16 @@ export default function MinerGame() {
      await saveGameToServer();
       
       const timestamp = Date.now();
-      const message = `BaseGold Leaderboard\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nTimestamp: ${timestamp}`;
+      const roundedGold = Math.floor(gold);
+      const message = `BaseGold Leaderboard\nAddress: ${address}\nGold: ${roundedGold}\nClicks: ${totalClicks}\nTimestamp: ${timestamp}`;
       
+      console.log('📝 Signing message:', message);
       const signature = await signMessageAsync({ message });
+      console.log('✍️ Signature obtained:', signature.substring(0, 20) + '...');
       
       const name = playerName.trim() || address.slice(0, 6) + '...' + address.slice(-4);
       
+      console.log('📤 Submitting to leaderboard:', { address, name, gold: roundedGold, totalClicks });
       const response = await fetch('/api/leaderboard', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -979,7 +983,7 @@ export default function MinerGame() {
           signature,
           message,
           name,
-          gold,
+          gold: roundedGold,
           totalClicks,
           timestamp,
           sessionId,
