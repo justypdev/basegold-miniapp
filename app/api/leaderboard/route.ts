@@ -1,6 +1,6 @@
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
-import { createPublicClient, http, parseAbiItem, formatUnits } from 'viem';
+import { createPublicClient, http, parseAbiItem, formatUnits, fallback } from 'viem';
 import { base } from 'viem/chains';
 
 // ============ REDIS CLIENT ============
@@ -51,17 +51,23 @@ interface SubmitRequest {
   sessionId: string;
 }
 
-// ============ VIEM CLIENT ============
+// ============ VIEM CLIENT WITH FALLBACK ============
 
 const publicClient = createPublicClient({
   chain: base,
-  transport: http('https://mainnet.base.org'),
+  transport: fallback([
+    http('https://mainnet.base.org'),
+    http('https://base.llamarpc.com'),
+    http('https://base-mainnet.public.blastapi.io'),
+    http('https://1rpc.io/base'),
+  ]),
 });
 
 // ============ VERIFY ON-CHAIN BURNS ============
 
 async function getOnChainBurnData(address: string): Promise<{ burnCount: number; totalBurned: number }> {
   try {
+    console.log('Fetching on-chain burns for:', address.substring(0, 10));
     const logs = await publicClient.getLogs({
       address: INSTANT_BURN,
       event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 ethAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
@@ -76,13 +82,15 @@ async function getOnChainBurnData(address: string): Promise<{ burnCount: number;
       totalBurned += bgBurned;
     });
 
+    console.log('On-chain burn data:', { burnCount: logs.length, totalBurned });
     return {
       burnCount: logs.length,
       totalBurned,
     };
   } catch (error) {
     console.error('Error fetching on-chain burns:', error);
-    return { burnCount: 0, totalBurned: 0 };
+    // Return -1 to indicate error vs actual 0 burns
+    return { burnCount: -1, totalBurned: 0 };
   }
 }
 
@@ -177,6 +185,14 @@ export async function POST(request: NextRequest) {
     }
 
     const onChainData = await getOnChainBurnData(address);
+    
+    // Check if RPC failed
+    if (onChainData.burnCount === -1) {
+      return NextResponse.json({ 
+        error: 'Failed to verify on-chain burns. Please try again.', 
+        rpcError: true 
+      }, { status: 503 });
+    }
     
     if (onChainData.burnCount < MIN_BURNS_FOR_LEADERBOARD) {
       return NextResponse.json({ 
