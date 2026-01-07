@@ -1,6 +1,6 @@
 import { Redis } from '@upstash/redis';
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyMessage, createPublicClient, http, parseAbiItem, formatUnits } from 'viem';
+import { createPublicClient, http, parseAbiItem, formatUnits } from 'viem';
 import { base } from 'viem/chains';
 
 // ============ REDIS CLIENT ============
@@ -155,12 +155,13 @@ export async function POST(request: NextRequest) {
     console.log('Verifying signature for:', { 
       address: address.substring(0, 10), 
       messageStart: message.substring(0, 50),
-      sigStart: signature.substring(0, 20)
+      sigStart: signature.substring(0, 30)
     });
     
     let isValidSignature = false;
     try {
-      isValidSignature = await verifyMessage({
+      // Use publicClient.verifyMessage which supports BOTH EOA and Smart Wallet (EIP-1271) signatures
+      isValidSignature = await publicClient.verifyMessage({
         address: address as `0x${string}`,
         message: message,
         signature: signature as `0x${string}`,
