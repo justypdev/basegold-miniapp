@@ -376,6 +376,7 @@ export default function MinerGame() {
   const [floatingTexts, setFloatingTexts] = useState<Array<{id: number, text: string, x: number, y: number}>>([]);
   const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
   const [txError, setTxError] = useState<string | null>(null);
+  const [txStatus, setTxStatus] = useState<string>('init');
   const [purchaseVerified, setPurchaseVerified] = useState(false);
   
   // Burn notifications
@@ -1593,7 +1594,13 @@ export default function MinerGame() {
                 return (
                   <div key={item.id}>
                     <button
-                      onClick={() => !isDisabled && setSelectedItem(selectedItem?.id === item.id ? null : item)}
+                      onClick={() => {
+                        if (!isDisabled) {
+                          setSelectedItem(selectedItem?.id === item.id ? null : item);
+                          setTxStatus('init');
+                          setTxError(null);
+                        }
+                      }}
                       disabled={isDisabled}
                       className={`w-full p-3 rounded-xl border transition-all text-left ${isDisabled ? 'opacity-50' : ''} ${selectedItem?.id === item.id ? 'bg-[#627EEA]/20 border-[#627EEA]' : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'}`}
                     >
@@ -1622,57 +1629,90 @@ export default function MinerGame() {
                     
                     {selectedItem?.id === item.id && isConnected && !pendingVerification && (
                       <div className="mt-2 p-3 bg-black/50 rounded-lg space-y-3">
-                        <div className="text-xs text-gray-400 text-center">
-                          ⏱️ After purchase, we'll verify on-chain before applying effects
-                        </div>
                         
-                        {/* Show error if transaction failed */}
-                        {txError && (
-                          <div className="p-2 bg-red-500/20 border border-red-500/50 rounded-lg text-center">
-                            <div className="text-red-400 text-sm">Transaction failed</div>
-                            <div className="text-gray-400 text-xs mt-1">Please try again</div>
-                          </div>
+                        {/* Show status based on transaction state */}
+                        {txStatus === 'transactionPending' ? (
+                          <>
+                            {/* Transaction submitted - waiting for confirmation */}
+                            <div className="p-3 bg-green-500/20 border border-green-500/50 rounded-lg text-center">
+                              <div className="flex items-center justify-center gap-2 mb-2">
+                                <div className="w-5 h-5 border-2 border-green-400 border-t-transparent rounded-full animate-spin"></div>
+                                <span className="text-green-400 font-medium">Transaction Submitted!</span>
+                              </div>
+                              <div className="text-green-300 text-sm">Waiting for blockchain confirmation...</div>
+                              <div className="text-gray-400 text-xs mt-2">This usually takes 1-3 seconds</div>
+                            </div>
+                            
+                            {/* Close button (can't cancel on-chain tx) */}
+                            <button
+                              onClick={() => {
+                                setSelectedItem(null);
+                                setTxStatus('init');
+                              }}
+                              className="w-full py-2 bg-gray-700/50 border border-gray-600 text-gray-300 rounded-lg text-sm hover:bg-gray-600/50 transition-all"
+                            >
+                              Close
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-xs text-gray-400 text-center">
+                              ⏱️ After purchase, we'll verify on-chain before applying effects
+                            </div>
+                            
+                            {/* Show error if transaction failed */}
+                            {txError && (
+                              <div className="p-2 bg-red-500/20 border border-red-500/50 rounded-lg text-center">
+                                <div className="text-red-400 text-sm">Transaction failed</div>
+                                <div className="text-gray-400 text-xs mt-1">Please try again</div>
+                              </div>
+                            )}
+                            
+                            <Transaction
+                              chainId={base.id}
+                              calls={buildPurchaseCalls(item.priceETH)}
+                              onSuccess={(response) => {
+                                console.log('✅ Transaction success:', response);
+                                setTxError(null);
+                                setTxStatus('init');
+                                startVerification(item);
+                              }}
+                              onError={(error) => {
+                                console.error('❌ Transaction error:', error);
+                                setTxError('Transaction was rejected or failed');
+                                setTxStatus('init');
+                              }}
+                              onStatus={(status) => {
+                                console.log('📝 Status:', status.statusName);
+                                setTxStatus(status.statusName);
+                                if (status.statusName === 'init') {
+                                  setTxError(null);
+                                }
+                              }}
+                            >
+                              <TransactionButton 
+                                text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
+                                className="w-full py-3 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
+                              />
+                              <TransactionStatus>
+                                <TransactionStatusLabel />
+                                <TransactionStatusAction />
+                              </TransactionStatus>
+                            </Transaction>
+                            
+                            {/* Cancel button - only when not pending */}
+                            <button
+                              onClick={() => {
+                                setSelectedItem(null);
+                                setTxError(null);
+                                setTxStatus('init');
+                              }}
+                              className="w-full py-2 bg-gray-700/50 border border-gray-600 text-gray-300 rounded-lg text-sm hover:bg-gray-600/50 transition-all"
+                            >
+                              ✕ Cancel
+                            </button>
+                          </>
                         )}
-                        
-                        <Transaction
-                          chainId={base.id}
-                          calls={buildPurchaseCalls(item.priceETH)}
-                          onSuccess={(response) => {
-                            console.log('✅ Transaction success:', response);
-                            setTxError(null);
-                            startVerification(item);
-                          }}
-                          onError={(error) => {
-                            console.error('❌ Transaction error:', error);
-                            setTxError('Transaction was rejected or failed');
-                          }}
-                          onStatus={(status) => {
-                            console.log('📝 Status:', status.statusName);
-                            if (status.statusName === 'init') {
-                              setTxError(null);
-                            }
-                          }}
-                        >
-                          <TransactionButton 
-                            text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
-                            className="w-full py-3 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
-                          />
-                          <TransactionStatus>
-                            <TransactionStatusLabel />
-                            <TransactionStatusAction />
-                          </TransactionStatus>
-                        </Transaction>
-                        
-                        {/* Cancel button - always visible */}
-                        <button
-                          onClick={() => {
-                            setSelectedItem(null);
-                            setTxError(null);
-                          }}
-                          className="w-full py-2 bg-gray-700/50 border border-gray-600 text-gray-300 rounded-lg text-sm hover:bg-gray-600/50 transition-all"
-                        >
-                          ✕ Cancel
-                        </button>
                       </div>
                     )}
                   </div>
