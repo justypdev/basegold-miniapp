@@ -1,4 +1,3 @@
-// app/providers.tsx
 'use client';
 
 import { ReactNode } from 'react';
@@ -23,21 +22,13 @@ const wagmiConfig = createConfig({
   },
 });
 
-export function Providers({ children }: { children: ReactNode }) {
+export default function Providers({ children }: { children: ReactNode }) {
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
         <OnchainKitProvider
           apiKey={process.env.NEXT_PUBLIC_CDP_API_KEY}
           chain={base}
-          config={{
-            appearance: {
-              mode: 'dark',
-            },
-            wallet: {
-              display: 'modal',
-            },
-          }}
         >
           {children}
         </OnchainKitProvider>
