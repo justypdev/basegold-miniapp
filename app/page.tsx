@@ -921,9 +921,10 @@ export default function MinerGame() {
   };
 
   // Parse burn stats
-  const lifetimeUsdcBurned = burnStats ? Number(formatUnits(burnStats[0], 6)) : 0;
-  const lifetimeBgBurned = burnStats ? Number(formatUnits(burnStats[1], 18)) : 0;
-  const totalBurnCount = burnStats ? Number(burnStats[2]) : 0;
+  const burnStatsArray = burnStats as [bigint, bigint, bigint] | undefined;
+  const lifetimeUsdcBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[0], 6)) : 0;
+  const lifetimeBgBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[1], 18)) : 0;
+  const totalBurnCount = burnStatsArray ? Number(burnStatsArray[2]) : 0;
 
   if (!isReady) {
     return (
