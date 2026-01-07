@@ -844,7 +844,8 @@ export default function MinerGame() {
   }, [pendingVerification, address, fetchVerifiedPurchases, goldPerSecond, appliedInstantGold]);
 
   // ============ WATCH BURN EVENTS ============
-
+  // DISABLED: Causes 429 rate limiting - burns detected via polling instead
+  /*
   useWatchContractEvent({
     address: INSTANT_BURN,
     abi: INSTANT_BURN_ABI,
@@ -863,6 +864,7 @@ export default function MinerGame() {
       });
     },
   });
+  */
 
   // ============ FETCH LEADERBOARDS ============
   
@@ -1041,7 +1043,7 @@ export default function MinerGame() {
       refetchSupply();
       refetchBurnStats();
       fetchVerifiedPurchases();
-    }, 15000);
+   }, 60000); // Reduced from 15s to 60s to avoid 429 rate limiting
     return () => clearInterval(interval);
   }, [refetchSupply, refetchBurnStats, fetchVerifiedPurchases]);
 
