@@ -13,8 +13,20 @@ import {
 import { ConnectWallet, Wallet, WalletDropdown, WalletDropdownFundLink } from '@coinbase/onchainkit/wallet';
 import { FundButton } from '@coinbase/onchainkit/fund';
 import { Avatar, Name } from '@coinbase/onchainkit/identity';
-import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem } from 'viem';
+import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
+
+// ============ RELIABLE PUBLIC CLIENT WITH FALLBACK RPCS ============
+
+const reliableClient = createPublicClient({
+  chain: base,
+  transport: fallback([
+    http('https://base.llamarpc.com'),
+    http('https://base-mainnet.public.blastapi.io'),
+    http('https://1rpc.io/base'),
+    http('https://mainnet.base.org'),
+  ]),
+});
 
 // ============ CONTRACT ADDRESSES (Base Mainnet) ============
 
@@ -407,18 +419,12 @@ export default function MinerGame() {
 
   // Create session when wallet connects
   const createSession = useCallback(async (forceTakeover = false) => {
-    if (!address || !signMessageAsync) return false;
+    if (!address) return false;
     
     setSessionError(null);
     
     try {
-      const timestamp = Date.now();
       const action = forceTakeover ? 'takeover' : 'create';
-      const message = forceTakeover 
-        ? `BaseGold Takeover\nAddress: ${address}\nTimestamp: ${timestamp}`
-        : `BaseGold Session\nAddress: ${address}\nTimestamp: ${timestamp}`;
-      
-      const signature = await signMessageAsync({ message });
       
       const response = await fetch('/api/session', {
         method: 'POST',
@@ -426,10 +432,7 @@ export default function MinerGame() {
         body: JSON.stringify({
           action,
           address,
-          signature,
-          message,
           deviceInfo: getDeviceInfo(),
-          timestamp,
         }),
       });
       
@@ -457,14 +460,10 @@ export default function MinerGame() {
       return false;
       
     } catch (error: any) {
-      if (error.message?.includes('User rejected')) {
-        setSessionError('Signature cancelled - session required to play');
-      } else {
-        setSessionError('Failed to create session');
-      }
+      setSessionError('Failed to create session');
       return false;
     }
-  }, [address, signMessageAsync]);
+  }, [address]);
 
   // Session heartbeat
   useEffect(() => {
@@ -606,9 +605,9 @@ export default function MinerGame() {
     }
   }, [address]);
   
-  // Save game to server (requires signature and valid session)
-  const saveGameToServer = useCallback(async (requireSignature = false) => {
-    if (!address || !signMessageAsync || !sessionId) {
+  // Save game to server (requires valid session)
+  const saveGameToServer = useCallback(async () => {
+    if (!address || !sessionId) {
       if (!sessionId) setSaveError('Session required - please reconnect wallet');
       return false;
     }
@@ -621,17 +620,13 @@ export default function MinerGame() {
     
     // Rate limit saves to every 30 seconds minimum
     const now = Date.now();
-    if (now - lastSaveTime.current < 30000 && !requireSignature) return false;
+    if (now - lastSaveTime.current < 30000) return false;
     
     setIsSaving(true);
     setSaveError(null);
     
     try {
       const timestamp = Date.now();
-      const message = `BaseGold Save\nAddress: ${address}\nTimestamp: ${timestamp}`;
-      
-      // Sign the save request
-      const signature = await signMessageAsync({ message });
       
       const gameState = {
         gold,
@@ -651,10 +646,7 @@ export default function MinerGame() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           address,
-          signature,
-          message,
           gameState,
-          timestamp,
           sessionId,
         }),
       });
@@ -682,17 +674,13 @@ export default function MinerGame() {
       return true;
       
     } catch (error: any) {
-      if (error.message?.includes('User rejected')) {
-        setSaveError('Signature cancelled');
-      } else {
-        console.error('Error saving game:', error);
-        setSaveError('Save failed');
-      }
+      console.error('Error saving game:', error);
+      setSaveError('Save failed');
       return false;
     } finally {
       setIsSaving(false);
     }
-  }, [address, signMessageAsync, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, lastClickTime]);
+  }, [address, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, lastClickTime, goldPerSecond]);
   
   // Auto-save reminder (prompts user to save periodically)
   const [showSaveReminder, setShowSaveReminder] = useState(false);
@@ -737,13 +725,13 @@ export default function MinerGame() {
   // ============ FETCH ON-CHAIN PURCHASES ============
   
   const fetchVerifiedPurchases = useCallback(async (): Promise<OnChainPurchase[]> => {
-    if (!publicClient || !address) {
+    if (!address) {
       setLoadingVerification(false);
       return [];
     }
     
     try {
-      const logs = await publicClient.getLogs({
+      const logs = await reliableClient.getLogs({
         address: INSTANT_BURN,
         event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 ethAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
         args: { buyer: address },
@@ -785,7 +773,7 @@ export default function MinerGame() {
       setLoadingVerification(false);
       return [];
     }
-  }, [publicClient, address]);
+  }, [address]);
 
   // Initial fetch
   useEffect(() => {
@@ -795,7 +783,7 @@ export default function MinerGame() {
   // ============ PURCHASE VERIFICATION POLLING ============
   
   useEffect(() => {
-    if (!pendingVerification || !publicClient || !address) return;
+    if (!pendingVerification || !address) return;
 
     let attempts = 0;
     const pollInterval = setInterval(async () => {
@@ -853,7 +841,7 @@ export default function MinerGame() {
     }, VERIFICATION_POLL_INTERVAL);
 
     return () => clearInterval(pollInterval);
-  }, [pendingVerification, publicClient, address, fetchVerifiedPurchases, goldPerSecond, appliedInstantGold]);
+  }, [pendingVerification, address, fetchVerifiedPurchases, goldPerSecond, appliedInstantGold]);
 
   // ============ WATCH BURN EVENTS ============
 
@@ -879,11 +867,9 @@ export default function MinerGame() {
   // ============ FETCH LEADERBOARDS ============
   
   const fetchBurnLeaderboard = useCallback(async () => {
-    if (!publicClient) return;
-    
     setLoadingLeaderboard(true);
     try {
-      const logs = await publicClient.getLogs({
+      const logs = await reliableClient.getLogs({
         address: INSTANT_BURN,
         event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 ethAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
         fromBlock: 'earliest',
@@ -913,7 +899,7 @@ export default function MinerGame() {
       console.error('Error fetching burn leaderboard:', error);
     }
     setLoadingLeaderboard(false);
-  }, [publicClient]);
+  }, []);
 
   const loadPointsLeaderboard = useCallback(async () => {
     try {
@@ -1277,7 +1263,7 @@ export default function MinerGame() {
                 🎮 Start Session
               </button>
               <p className="text-xs text-gray-500 mt-2">
-                Requires wallet signature (no gas fee)
+                One device per wallet (no gas fee)
               </p>
             </div>
           </div>
@@ -1457,7 +1443,7 @@ export default function MinerGame() {
                 </div>
                 
                 <p className="text-[10px] text-gray-500 text-center mt-1">
-                  🔐 Saved securely to server (requires wallet signature)
+                  🔐 Saved securely to server
                 </p>
               </div>
             )}
