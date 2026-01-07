@@ -1395,7 +1395,7 @@ export default function MinerGame() {
                       <button
                         onClick={() => {
                           setShowSaveReminder(false);
-                          saveGameToServer(true);
+                saveGameToServer();
                         }}
                         className="px-3 py-1 bg-yellow-500 text-black text-sm font-medium rounded"
                       >
