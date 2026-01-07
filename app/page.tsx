@@ -21,7 +21,7 @@ import { base } from 'wagmi/chains';
 const BG_TOKEN = '0x36b712A629095234F2196BbB000D1b96C12Ce78e' as `0x${string}`;
 
 // InstantBurn Contract (DEPLOYED!)
-const INSTANT_BURN = '0xf48EF6c8aE0451A49368625117E292c58354304a' as `0x${string}`;
+const INSTANT_BURN = '0x51Bc1196A03b27E1114Cba0615Af204a8b7Ea618' as `0x${string}`;
 
 // USDC on Base
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`;
