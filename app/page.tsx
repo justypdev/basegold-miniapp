@@ -474,6 +474,31 @@ export default function MinerGame() {
     return Object.values(premiumPurchases).reduce((sum, count) => sum + count, 0);
   }, [premiumPurchases]);
 
+  // Fetch user's burn stats from blockchain (defined early for use in purchase effects)
+  const fetchUserBurnStats = useCallback(async () => {
+    if (!publicClient || !address) return;
+    
+    try {
+      const logs = await publicClient.getLogs({
+        address: INSTANT_BURN,
+        event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 ethAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
+        args: { buyer: address },
+        fromBlock: 'earliest',
+        toBlock: 'latest',
+      });
+
+      let totalBurned = 0;
+      logs.forEach((log: any) => {
+        totalBurned += Number(formatUnits(log.args.bgBurned || 0n, 18));
+      });
+
+      setUserBurnCount(logs.length);
+      setUserBurnAmount(totalBurned);
+    } catch (error) {
+      console.error('Error fetching user burn stats:', error);
+    }
+  }, [publicClient, address]);
+
   // Direct apply purchase effect - can be called from anywhere
   const applyPurchaseEffectDirect = useCallback((item: typeof SHOP_ITEMS[0]) => {
     console.log('🎮 DIRECT: Applying purchase effect for:', item.id, item.name);
@@ -693,31 +718,6 @@ export default function MinerGame() {
       highestCombo,
     }));
   }, [unlockedAchievements, highestCombo, dataLoaded]);
-
-  // Fetch user's burn stats from blockchain
-  const fetchUserBurnStats = useCallback(async () => {
-    if (!publicClient || !address) return;
-    
-    try {
-      const logs = await publicClient.getLogs({
-        address: INSTANT_BURN,
-        event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 ethAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
-        args: { buyer: address },
-        fromBlock: 'earliest',
-        toBlock: 'latest',
-      });
-
-      let totalBurned = 0;
-      logs.forEach((log: any) => {
-        totalBurned += Number(formatUnits(log.args.bgBurned || 0n, 18));
-      });
-
-      setUserBurnCount(logs.length);
-      setUserBurnAmount(totalBurned);
-    } catch (error) {
-      console.error('Error fetching user burn stats:', error);
-    }
-  }, [publicClient, address]);
 
   // Fetch user burn stats when address changes
   useEffect(() => {
