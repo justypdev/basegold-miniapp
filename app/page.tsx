@@ -20,10 +20,10 @@ import { base } from 'wagmi/chains';
 // BaseGold Token
 const BG_TOKEN = '0x36b712A629095234F2196BbB000D1b96C12Ce78e' as `0x${string}`;
 
-// InstantBurn Contract (DEPLOYED!)
-const INSTANT_BURN = '0x51Bc1196A03b27E1114Cba0615Af204a8b7Ea618' as `0x${string}`;
+// InstantBurn Contract - ETH Version
+const INSTANT_BURN = '0xF9dc5A103C5B09bfe71cF1Badcce362827b34BFE' as `0x${string}`;
 
-// USDC on Base
+// USDC on Base (for display purposes)
 const USDC_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' as `0x${string}`;
 
 // Aerodrome Router for Buy BG swaps
@@ -65,11 +65,11 @@ const ERC20_ABI = [
 
 const INSTANT_BURN_ABI = [
   {
-    name: 'buyAndBurnAuto',
+    name: 'buyAndBurn',
     type: 'function',
-    inputs: [{ name: 'usdcAmount', type: 'uint256' }],
+    inputs: [],
     outputs: [],
-    stateMutability: 'nonpayable',
+    stateMutability: 'payable',
   },
   {
     name: 'getBurnStats',
@@ -87,7 +87,7 @@ const INSTANT_BURN_ABI = [
     type: 'event',
     inputs: [
       { name: 'buyer', type: 'address', indexed: true },
-      { name: 'usdcAmount', type: 'uint256', indexed: false },
+      { name: 'ethAmount', type: 'uint256', indexed: false },
       { name: 'bgBurned', type: 'uint256', indexed: false },
       { name: 'timestamp', type: 'uint256', indexed: false },
       { name: 'totalBurnedLifetime', type: 'uint256', indexed: false },
@@ -122,14 +122,16 @@ const ROUTER_ABI = [
   },
 ] as const;
 
-// ============ SHOP ITEMS ============
+// ============ SHOP ITEMS (ETH prices) ============
+// Prices in ETH (approximate USD equivalents at ~$3000/ETH)
 
 const SHOP_ITEMS = [
   {
     id: 'boost_2x',
     name: '⚡ 2x Power Boost',
     description: 'Double click power for 10 minutes',
-    priceUSDC: '0.50',
+    priceETH: '0.00015',
+    priceUSD: '~$0.50',
     emoji: '⚡',
     effect: { type: 'boost', multiplier: 2, duration: 600000 }
   },
@@ -137,7 +139,8 @@ const SHOP_ITEMS = [
     id: 'time_warp',
     name: '⏰ Time Warp',
     description: 'Instantly collect 1 hour of passive gold',
-    priceUSDC: '1.00',
+    priceETH: '0.0003',
+    priceUSD: '~$1.00',
     emoji: '⏰',
     effect: { type: 'instant_gold', hours: 1 }
   },
@@ -145,7 +148,8 @@ const SHOP_ITEMS = [
     id: 'diamond_pickaxe',
     name: '💎 Diamond Pickaxe',
     description: 'Permanent +10 gold per click',
-    priceUSDC: '2.00',
+    priceETH: '0.0006',
+    priceUSD: '~$2.00',
     emoji: '💎',
     effect: { type: 'permanent_click', amount: 10 }
   },
@@ -153,7 +157,8 @@ const SHOP_ITEMS = [
     id: 'auto_miner',
     name: '🤖 Auto-Miner Bot',
     description: 'Permanent +100 gold per second',
-    priceUSDC: '5.00',
+    priceETH: '0.0015',
+    priceUSD: '~$5.00',
     emoji: '🤖',
     effect: { type: 'permanent_passive', amount: 100 }
   },
@@ -161,7 +166,8 @@ const SHOP_ITEMS = [
     id: 'golden_crown',
     name: '👑 Golden Crown',
     description: 'Exclusive cosmetic + 15x combo max',
-    priceUSDC: '3.00',
+    priceETH: '0.001',
+    priceUSD: '~$3.00',
     emoji: '👑',
     effect: { type: 'cosmetic', maxCombo: 15 }
   },
@@ -169,7 +175,8 @@ const SHOP_ITEMS = [
     id: 'burn_booster',
     name: '🔥 Burn Booster',
     description: '100% goes directly to burn!',
-    priceUSDC: '1.00',
+    priceETH: '0.0003',
+    priceUSD: '~$1.00',
     emoji: '🔥',
     effect: { type: 'burn_contribution', amount: 1 }
   },
@@ -453,7 +460,7 @@ export default function MinerGame() {
     try {
       const logs = await publicClient.getLogs({
         address: INSTANT_BURN,
-        event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 usdcAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
+        event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 ethAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
         fromBlock: 'earliest',
         toBlock: 'latest',
       });
@@ -590,7 +597,7 @@ export default function MinerGame() {
     try {
       const logs = await publicClient.getLogs({
         address: INSTANT_BURN,
-        event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 usdcAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
+        event: parseAbiItem('event InstantBurn(address indexed buyer, uint256 ethAmount, uint256 bgBurned, uint256 timestamp, uint256 totalBurnedLifetime)'),
         args: { buyer: address },
         fromBlock: 'earliest',
         toBlock: 'latest',
@@ -848,24 +855,17 @@ export default function MinerGame() {
     return Math.floor(num).toString();
   };
 
-  // Build purchase transaction (approve + buyAndBurnAuto)
-  const buildPurchaseCalls = (priceUSDC: string, itemId: string) => {
-    const amount = parseUnits(priceUSDC, 6);
+  // Build purchase transaction - ETH payment to buyAndBurn()
+  const buildPurchaseCalls = (priceETH: string) => {
+    const value = parseEther(priceETH);
     return [
       {
-        to: USDC_ADDRESS,
-        data: encodeFunctionData({
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [INSTANT_BURN, amount],
-        }),
-      },
-      {
         to: INSTANT_BURN,
+        value: value,
         data: encodeFunctionData({
           abi: INSTANT_BURN_ABI,
-          functionName: 'buyAndBurnAuto',
-          args: [amount],
+          functionName: 'buyAndBurn',
+          args: [],
         }),
       },
     ];
@@ -921,9 +921,9 @@ export default function MinerGame() {
     }
   };
 
-  // Parse burn stats
+  // Parse burn stats (now returns ETH received, not USDC)
   const burnStatsArray = burnStats as [bigint, bigint, bigint] | undefined;
-  const lifetimeUsdcBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[0], 6)) : 0;
+  const lifetimeEthBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[0], 18)) : 0;
   const lifetimeBgBurned = burnStatsArray ? Number(formatUnits(burnStatsArray[1], 18)) : 0;
   const totalBurnCount = burnStatsArray ? Number(burnStatsArray[2]) : 0;
 
@@ -1027,39 +1027,40 @@ export default function MinerGame() {
         )}
       </div>
 
-      {/* Your USDC Balance Display - For Shop Purchases */}
-      <div className="bg-gradient-to-r from-[#2775CA]/10 via-[#1a5490]/10 to-[#2775CA]/10 border-b border-[#2775CA]/30 py-2 px-4">
+      {/* Your ETH Balance Display - For Shop Purchases */}
+      <div className="bg-gradient-to-r from-[#627EEA]/10 via-[#3C4C8C]/10 to-[#627EEA]/10 border-b border-[#627EEA]/30 py-2 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-[#2775CA] flex items-center justify-center text-white font-bold text-xs">
-              $
+            <div className="w-8 h-8 rounded-full bg-[#627EEA] flex items-center justify-center text-white font-bold text-xs">
+              Ξ
             </div>
             <div>
-              <div className="text-xs text-gray-400">Your USDC</div>
-              <div className="text-lg font-bold text-[#2775CA] font-mono">
-                ${isConnected && usdcBalance 
-                  ? parseFloat(usdcBalance.formatted).toFixed(2) 
-                  : '0.00'}
+              <div className="text-xs text-gray-400">Your ETH</div>
+              <div className="text-lg font-bold text-[#627EEA] font-mono">
+                {isConnected && ethBalance 
+                  ? parseFloat(ethBalance.formatted).toFixed(4) 
+                  : '0.0000'}
+                <span className="text-xs text-gray-500 ml-1">ETH</span>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {isConnected && usdcBalance && parseFloat(usdcBalance.formatted) < 1 && (
+            {isConnected && ethBalance && parseFloat(ethBalance.formatted) < 0.001 && (
               <span className="text-xs text-orange-400">Low balance</span>
             )}
             <a
-              href="https://www.coinbase.com/how-to-buy/usdc"
+              href="https://bridge.base.org/"
               target="_blank"
               rel="noopener noreferrer"
-              className="px-3 py-1.5 bg-[#2775CA]/20 border border-[#2775CA]/50 text-[#2775CA] font-medium text-xs rounded-lg hover:bg-[#2775CA]/30 transition-all"
+              className="px-3 py-1.5 bg-[#627EEA]/20 border border-[#627EEA]/50 text-[#627EEA] font-medium text-xs rounded-lg hover:bg-[#627EEA]/30 transition-all"
             >
-              {isConnected && usdcBalance && parseFloat(usdcBalance.formatted) > 0 ? '+ Get More' : 'Get USDC'}
+              {isConnected && ethBalance && parseFloat(ethBalance.formatted) > 0 ? '+ Get More' : 'Get ETH'}
             </a>
           </div>
         </div>
         <div className="max-w-lg mx-auto mt-1">
           <div className="text-xs text-center text-gray-500">
-            💎 Use USDC to buy shop items → Burns BG → Your BG becomes more valuable!
+            💎 Use ETH to buy shop items → Burns BG → Your BG becomes more valuable!
           </div>
         </div>
       </div>
@@ -1183,39 +1184,43 @@ export default function MinerGame() {
               <p className="text-xs text-orange-400">Every purchase instantly burns BG! 🔥</p>
             </div>
 
-            {isConnected && usdcBalance && (
-              <div className="mb-4 p-3 bg-[#2775CA]/10 border border-[#2775CA]/30 rounded-lg">
+            {isConnected && ethBalance && (
+              <div className="mb-4 p-3 bg-[#627EEA]/10 border border-[#627EEA]/30 rounded-lg">
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-[#2775CA] flex items-center justify-center text-white font-bold text-xs">$</div>
-                    <span className="text-gray-300 text-sm">Your USDC:</span>
+                    <div className="w-6 h-6 rounded-full bg-[#627EEA] flex items-center justify-center text-white font-bold text-xs">Ξ</div>
+                    <span className="text-gray-300 text-sm">Your ETH:</span>
                   </div>
-                  <span className="text-[#2775CA] font-bold text-lg">${parseFloat(usdcBalance.formatted).toFixed(2)}</span>
+                  <span className="text-[#627EEA] font-bold text-lg">{parseFloat(ethBalance.formatted).toFixed(4)} ETH</span>
                 </div>
-                {parseFloat(usdcBalance.formatted) < 5 && (
+                {parseFloat(ethBalance.formatted) < 0.002 && (
                   <div className="mt-2 flex items-center justify-between">
                     <span className="text-xs text-orange-400">⚠️ Low balance for shopping</span>
-                    <button
-                      onClick={() => setActiveTab('buy')}
-                      className="text-xs text-[#2775CA] hover:underline"
+                    <a
+                      href="https://bridge.base.org/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-xs text-[#627EEA] hover:underline"
                     >
-                      Get USDC →
-                    </button>
+                      Get ETH →
+                    </a>
                   </div>
                 )}
               </div>
             )}
 
-            {isConnected && !usdcBalance && (
+            {isConnected && !ethBalance && (
               <div className="mb-4 p-3 bg-orange-500/10 border border-orange-500/30 rounded-lg">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs text-orange-400">💵 You need USDC to buy items</span>
-                  <button
-                    onClick={() => setActiveTab('buy')}
-                    className="px-3 py-1 bg-[#2775CA] text-white text-xs font-medium rounded hover:bg-[#2775CA]/80"
+                  <span className="text-xs text-orange-400">💵 You need ETH to buy items</span>
+                  <a
+                    href="https://bridge.base.org/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3 py-1 bg-[#627EEA] text-white text-xs font-medium rounded hover:bg-[#627EEA]/80"
                   >
-                    Get USDC
-                  </button>
+                    Get ETH
+                  </a>
                 </div>
               </div>
             )}
@@ -1233,7 +1238,7 @@ export default function MinerGame() {
                     onClick={() => setSelectedItem(selectedItem?.id === item.id ? null : item)}
                     className={`w-full p-3 rounded-xl border transition-all text-left
                       ${selectedItem?.id === item.id 
-                        ? 'bg-[#2775CA]/20 border-[#2775CA]' 
+                        ? 'bg-[#627EEA]/20 border-[#627EEA]' 
                         : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'}`}
                   >
                     <div className="flex justify-between items-start">
@@ -1244,7 +1249,10 @@ export default function MinerGame() {
                           <div className="text-xs text-gray-400">{item.description}</div>
                         </div>
                       </div>
-                      <div className="text-[#2775CA] font-bold">${item.priceUSDC}</div>
+                      <div className="text-right">
+                        <div className="text-[#627EEA] font-bold">{item.priceETH} ETH</div>
+                        <div className="text-xs text-gray-500">{item.priceUSD}</div>
+                      </div>
                     </div>
                   </button>
                   
@@ -1252,11 +1260,11 @@ export default function MinerGame() {
                     <div className="mt-2 p-2 bg-black/50 rounded-lg">
                       <Transaction
                         chainId={base.id}
-                        calls={buildPurchaseCalls(item.priceUSDC, item.id)}
+                        calls={buildPurchaseCalls(item.priceETH)}
                         onSuccess={() => applyPurchaseEffect(item)}
                       >
                         <TransactionButton 
-                          text={`Pay $${item.priceUSDC} & Burn BG 🔥`}
+                          text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
                           className="w-full py-2 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
                         />
                         <TransactionStatus>
@@ -1472,15 +1480,15 @@ export default function MinerGame() {
               </div>
             </div>
 
-            {/* Get USDC Section */}
-            <div className="mt-4 p-4 bg-[#2775CA]/10 border border-[#2775CA]/30 rounded-xl">
-              <h3 className="text-sm font-medium text-[#2775CA] mb-2">💵 Need USDC for Shop?</h3>
+            {/* Get ETH Section */}
+            <div className="mt-4 p-4 bg-[#627EEA]/10 border border-[#627EEA]/30 rounded-xl">
+              <h3 className="text-sm font-medium text-[#627EEA] mb-2">⚡ Need ETH for Shop?</h3>
               <p className="text-xs text-gray-400 mb-3">
-                USDC is required to buy premium items. Get USDC on Base:
+                ETH is required to buy premium items. Get ETH on Base:
               </p>
               <div className="space-y-2">
                 <a
-                  href="https://www.coinbase.com/how-to-buy/usdc"
+                  href="https://www.coinbase.com/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="flex items-center justify-between p-3 bg-[#0052FF]/20 border border-[#0052FF]/30 rounded-lg hover:bg-[#0052FF]/30 transition-all"
@@ -1492,22 +1500,7 @@ export default function MinerGame() {
                       <div className="text-xs text-gray-400">Buy with card/bank</div>
                     </div>
                   </div>
-                  <span className="text-[#0052FF] text-xs">Get USDC →</span>
-                </a>
-                <a
-                  href="https://aerodrome.finance/swap?from=eth&to=0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-between p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg hover:bg-blue-500/20 transition-all"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">🔄</span>
-                    <div>
-                      <div className="text-sm font-medium text-white">Swap ETH → USDC</div>
-                      <div className="text-xs text-gray-400">On Aerodrome</div>
-                    </div>
-                  </div>
-                  <span className="text-blue-400 text-xs">Swap →</span>
+                  <span className="text-[#0052FF] text-xs">Get ETH →</span>
                 </a>
                 <a
                   href="https://bridge.base.org/"
@@ -1970,8 +1963,8 @@ export default function MinerGame() {
               <h3 className="text-sm font-medium text-gray-300 mb-3">🎮 Mini App Burn Stats</h3>
               <div className="space-y-2 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-gray-400">USDC Spent:</span>
-                  <span className="text-[#2775CA]">${lifetimeUsdcBurned.toFixed(2)}</span>
+                  <span className="text-gray-400">ETH Spent:</span>
+                  <span className="text-[#627EEA]">{lifetimeEthBurned.toFixed(6)} ETH</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">BG Burned:</span>
