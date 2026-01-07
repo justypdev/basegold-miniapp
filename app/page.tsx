@@ -374,7 +374,7 @@ export default function MinerGame() {
   // UI state
   const [activeTab, setActiveTab] = useState<'game' | 'shop' | 'buy' | 'leaderboard' | 'stats'>('game');
   const [floatingTexts, setFloatingTexts] = useState<Array<{id: number, text: string, x: number, y: number}>>([]);
- const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
+  const [selectedItem, setSelectedItem] = useState<typeof SHOP_ITEMS[0] | null>(null);
   const [txError, setTxError] = useState<string | null>(null);
   
   // Burn notifications
@@ -1660,7 +1660,6 @@ export default function MinerGame() {
                           ✕ Cancel
                         </button>
                       </div>
-                    )}
                     )}
                   </div>
                 );
