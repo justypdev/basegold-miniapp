@@ -1098,11 +1098,15 @@ export default function MinerGame() {
                         <Transaction
                           chainId={base.id}
                           calls={buildPurchaseCalls(item.priceETH)}
+                          onSuccess={(response) => {
+                            console.log('✅ Transaction success:', response);
+                            startVerification(item);
+                          }}
+                          onError={(error) => {
+                            console.error('❌ Transaction error:', error);
+                          }}
                           onStatus={(status) => {
                             console.log('📝 Status:', status.statusName);
-                            if (status.statusName === 'success') {
-                              startVerification(item);
-                            }
                           }}
                         >
                           <TransactionButton 
@@ -1120,6 +1124,35 @@ export default function MinerGame() {
                 );
               })}
             </div>
+
+            {/* Manual Refresh Button */}
+            {isConnected && (
+              <div className="mt-4">
+                <button
+                  onClick={async () => {
+                    setLoadingVerification(true);
+                    await fetchVerifiedPurchases();
+                    setLoadingVerification(false);
+                  }}
+                  disabled={loadingVerification}
+                  className="w-full py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-gray-400 hover:bg-white/10 hover:text-white transition-all flex items-center justify-center gap-2"
+                >
+                  {loadingVerification ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></div>
+                      Checking...
+                    </>
+                  ) : (
+                    <>
+                      🔄 Check for Recent Purchases
+                    </>
+                  )}
+                </button>
+                <p className="text-xs text-gray-500 text-center mt-1">
+                  Click if a transaction completed but effects didn't apply
+                </p>
+              </div>
+            )}
 
             {!isConnected && (
               <div className="mt-4 text-center">
