@@ -705,9 +705,9 @@ export default function MinerGame() {
   // Calculate total burned
   useEffect(() => {
     if (totalSupply) {
-      const supply = Number(formatUnits(totalSupply, 18));
-      const stuck = contractBalance ? Number(formatUnits(contractBalance, 18)) : 0;
-      const dead = deadBalance ? Number(formatUnits(deadBalance, 18)) : 0;
+      const supply = Number(formatUnits(totalSupply as bigint, 18));
+      const stuck = contractBalance ? Number(formatUnits(contractBalance as bigint, 18)) : 0;
+      const dead = deadBalance ? Number(formatUnits(deadBalance as bigint, 18)) : 0;
       const burned = INITIAL_SUPPLY - supply + stuck + dead;
       setTotalBurned(burned);
     }
