@@ -12,9 +12,8 @@ const redis = new Redis({
 
 // ============ CONSTANTS ============
 
-const SESSION_EXPIRY = 60 * 60 * 24; // 24 hours in seconds
-const HEARTBEAT_INTERVAL = 30000; // 30 seconds - client should heartbeat this often
-const SESSION_TIMEOUT = 60000; // 60 seconds - if no heartbeat, session is stale
+const SESSION_EXPIRY = 60 * 60 * 24;
+const SESSION_TIMEOUT = 60000;
 
 // ============ TYPES ============
 
@@ -25,6 +24,21 @@ interface Session {
   createdAt: number;
   lastHeartbeat: number;
   ip?: string;
+}
+
+// ============ HELPER: Verify Signature ============
+
+async function verifyWalletSignature(address: string, message: string, signature: string): Promise<boolean> {
+  try {
+    return await verifyMessage({
+      address: address as `0x${string}`,
+      message,
+      signature: signature as `0x${string}`,
+    });
+  } catch (e) {
+    console.error('Signature verification error:', e);
+    return false;
+  }
 }
 
 // ============ POST - Create/Validate Session ============
@@ -39,48 +53,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid address' }, { status: 400 });
     }
 
-    // Get client IP for additional tracking
     const ip = request.headers.get('x-forwarded-for')?.split(',')[0] || 
                request.headers.get('x-real-ip') || 
                'unknown';
 
     // ============ CREATE NEW SESSION ============
     if (action === 'create') {
-      // Verify signature
       const expectedMessage = `BaseGold Session\nAddress: ${address}\nTimestamp: ${timestamp}`;
+      
       if (message !== expectedMessage) {
+        console.log('Message mismatch:', { received: message, expected: expectedMessage });
         return NextResponse.json({ error: 'Invalid message format' }, { status: 400 });
       }
 
-      // Check timestamp is recent (within 5 minutes)
       if (Math.abs(Date.now() - timestamp) > 5 * 60 * 1000) {
         return NextResponse.json({ error: 'Timestamp expired' }, { status: 400 });
       }
 
-      let isValidSignature = false;
-      try {
-        isValidSignature = await verifyMessage({
-          address: address as `0x${string}`,
-          message: expectedMessage,
-          signature: signature as `0x${string}`,
-        });
-      } catch (e) {
-        return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
-      }
-
-      if (!isValidSignature) {
+      const isValid = await verifyWalletSignature(address, expectedMessage, signature);
+      if (!isValid) {
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
 
-      // Check for existing active session
       const existingSession = await redis.get<Session>(`session:${normalizedAddress}`);
       
       if (existingSession) {
         const timeSinceHeartbeat = Date.now() - existingSession.lastHeartbeat;
-        
-        // If existing session is still active (recent heartbeat), notify user
         if (timeSinceHeartbeat < SESSION_TIMEOUT) {
-          // Return info about existing session so user can decide
           return NextResponse.json({
             conflict: true,
             existingSession: {
@@ -91,10 +90,8 @@ export async function POST(request: NextRequest) {
             message: 'Another device is currently playing with this wallet',
           });
         }
-        // Existing session is stale, we can override it
       }
 
-      // Create new session
       const newSessionId = uuidv4();
       const newSession: Session = {
         sessionId: newSessionId,
@@ -106,8 +103,6 @@ export async function POST(request: NextRequest) {
       };
 
       await redis.set(`session:${normalizedAddress}`, newSession, { ex: SESSION_EXPIRY });
-
-      console.log(`🎮 New session created for ${normalizedAddress.slice(0, 8)}... from ${deviceInfo}`);
 
       return NextResponse.json({
         success: true,
@@ -118,8 +113,8 @@ export async function POST(request: NextRequest) {
 
     // ============ FORCE TAKEOVER SESSION ============
     if (action === 'takeover') {
-      // Verify signature for takeover
       const expectedMessage = `BaseGold Takeover\nAddress: ${address}\nTimestamp: ${timestamp}`;
+      
       if (message !== expectedMessage) {
         return NextResponse.json({ error: 'Invalid message format' }, { status: 400 });
       }
@@ -128,22 +123,11 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: 'Timestamp expired' }, { status: 400 });
       }
 
-      let isValidSignature = false;
-      try {
-        isValidSignature = await verifyMessage({
-          address: address as `0x${string}`,
-          message: expectedMessage,
-          signature: signature as `0x${string}`,
-        });
-      } catch (e) {
-        return NextResponse.json({ error: 'Signature verification failed' }, { status: 401 });
-      }
-
-      if (!isValidSignature) {
+      const isValid = await verifyWalletSignature(address, expectedMessage, signature);
+      if (!isValid) {
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
 
-      // Create new session, forcibly replacing old one
       const newSessionId = uuidv4();
       const newSession: Session = {
         sessionId: newSessionId,
@@ -155,8 +139,6 @@ export async function POST(request: NextRequest) {
       };
 
       await redis.set(`session:${normalizedAddress}`, newSession, { ex: SESSION_EXPIRY });
-
-      console.log(`🔄 Session takeover for ${normalizedAddress.slice(0, 8)}... from ${deviceInfo}`);
 
       return NextResponse.json({
         success: true,
@@ -174,27 +156,17 @@ export async function POST(request: NextRequest) {
       const existingSession = await redis.get<Session>(`session:${normalizedAddress}`);
 
       if (!existingSession) {
-        return NextResponse.json({ 
-          error: 'Session not found', 
-          kicked: true,
-          reason: 'no_session'
-        }, { status: 401 });
+        return NextResponse.json({ error: 'Session not found', kicked: true, reason: 'no_session' }, { status: 401 });
       }
 
       if (existingSession.sessionId !== sessionId) {
-        return NextResponse.json({ 
-          error: 'Session invalidated', 
-          kicked: true,
-          reason: 'different_session',
-          message: 'Another device has taken over this wallet'
-        }, { status: 401 });
+        return NextResponse.json({ error: 'Session invalidated', kicked: true, reason: 'different_session' }, { status: 401 });
       }
 
-      // Update heartbeat
       existingSession.lastHeartbeat = Date.now();
       await redis.set(`session:${normalizedAddress}`, existingSession, { ex: SESSION_EXPIRY });
 
-      return NextResponse.json({ success: true, message: 'Heartbeat received' });
+      return NextResponse.json({ success: true });
     }
 
     // ============ VALIDATE SESSION ============
@@ -205,16 +177,8 @@ export async function POST(request: NextRequest) {
 
       const existingSession = await redis.get<Session>(`session:${normalizedAddress}`);
 
-      if (!existingSession) {
-        return NextResponse.json({ valid: false, reason: 'Session not found' });
-      }
-
-      if (existingSession.sessionId !== sessionId) {
-        return NextResponse.json({ 
-          valid: false, 
-          reason: 'Session invalidated by another device',
-          kicked: true
-        });
+      if (!existingSession || existingSession.sessionId !== sessionId) {
+        return NextResponse.json({ valid: false, kicked: true });
       }
 
       return NextResponse.json({ valid: true });
@@ -222,19 +186,13 @@ export async function POST(request: NextRequest) {
 
     // ============ END SESSION ============
     if (action === 'end') {
-      if (!sessionId) {
-        return NextResponse.json({ error: 'Session ID required' }, { status: 400 });
+      if (sessionId) {
+        const existingSession = await redis.get<Session>(`session:${normalizedAddress}`);
+        if (existingSession && existingSession.sessionId === sessionId) {
+          await redis.del(`session:${normalizedAddress}`);
+        }
       }
-
-      const existingSession = await redis.get<Session>(`session:${normalizedAddress}`);
-
-      // Only delete if it's our session
-      if (existingSession && existingSession.sessionId === sessionId) {
-        await redis.del(`session:${normalizedAddress}`);
-        console.log(`👋 Session ended for ${normalizedAddress.slice(0, 8)}...`);
-      }
-
-      return NextResponse.json({ success: true, message: 'Session ended' });
+      return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
