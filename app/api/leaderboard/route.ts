@@ -6,8 +6,8 @@ import { base } from 'viem/chains';
 // ============ REDIS CLIENT ============
 
 const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN!,
+  url: process.env.UPSTASH_REDIS_REST_KV_REST_API_URL || process.env.KV_REST_API_URL!,
+  token: process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN || process.env.KV_REST_API_TOKEN!,
 });
 
 // ============ CONSTANTS ============
@@ -91,9 +91,8 @@ export async function GET(request: NextRequest) {
   try {
     const leaderboard = await redis.get<LeaderboardEntry[]>(LEADERBOARD_KEY) || [];
     
-    // Sort by gold descending
     const sorted = leaderboard
-      .filter(e => Date.now() - e.timestamp < 30 * 24 * 60 * 60 * 1000) // Last 30 days
+      .filter(e => Date.now() - e.timestamp < 30 * 24 * 60 * 60 * 1000)
       .sort((a, b) => b.gold - a.gold)
       .slice(0, 50);
 
@@ -112,7 +111,6 @@ export async function POST(request: NextRequest) {
     const body: SubmitRequest = await request.json();
     const { address, signature, name, gold, totalClicks, timestamp, sessionId } = body;
 
-    // Validate address
     const normalizedAddress = address?.toLowerCase();
     if (!normalizedAddress || !/^0x[a-f0-9]{40}$/i.test(normalizedAddress)) {
       return NextResponse.json({ error: 'Invalid address' }, { status: 400 });
@@ -141,15 +139,12 @@ export async function POST(request: NextRequest) {
       }, { status: 401 });
     }
 
-    // Validate name
     const sanitizedName = (name || '').trim().slice(0, 20) || `${address.slice(0, 6)}...${address.slice(-4)}`;
 
-    // Check timestamp is recent (within 5 minutes)
     if (Math.abs(Date.now() - timestamp) > 5 * 60 * 1000) {
       return NextResponse.json({ error: 'Timestamp expired' }, { status: 400 });
     }
 
-    // Verify signature
     const expectedMessage = `BaseGold Leaderboard\nAddress: ${address}\nGold: ${gold}\nClicks: ${totalClicks}\nTimestamp: ${timestamp}`;
     
     let isValidSignature = false;
@@ -167,7 +162,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
-    // Verify on-chain burn count
     const onChainData = await getOnChainBurnData(address);
     
     if (onChainData.burnCount < MIN_BURNS_FOR_LEADERBOARD) {
@@ -177,24 +171,18 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Cross-reference with saved game state
     const savedGame = await redis.get<any>(`game:${normalizedAddress}`);
     
-    // If they have a saved game, gold should roughly match (within 20% for timing)
     if (savedGame && Math.abs(savedGame.gold - gold) / Math.max(savedGame.gold, 1) > 0.2) {
       console.warn(`Gold mismatch for ${normalizedAddress}: submitted ${gold}, saved ${savedGame.gold}`);
-      // Use the server-side value instead
-      // gold = savedGame.gold;
     }
 
-    // Get current leaderboard
     let leaderboard = await redis.get<LeaderboardEntry[]>(LEADERBOARD_KEY) || [];
 
-    // Create new entry
     const newEntry: LeaderboardEntry = {
       address: normalizedAddress,
       name: sanitizedName,
-      gold: savedGame ? savedGame.gold : gold, // Trust server-side gold
+      gold: savedGame ? savedGame.gold : gold,
       totalClicks: savedGame ? savedGame.totalClicks : totalClicks,
       burnCount: onChainData.burnCount,
       totalBurned: onChainData.totalBurned,
@@ -202,11 +190,9 @@ export async function POST(request: NextRequest) {
       verified: true,
     };
 
-    // Update or add entry
     const existingIndex = leaderboard.findIndex(e => e.address.toLowerCase() === normalizedAddress);
     
     if (existingIndex >= 0) {
-      // Only update if new score is higher
       if (newEntry.gold > leaderboard[existingIndex].gold) {
         leaderboard[existingIndex] = newEntry;
       } else {
@@ -220,16 +206,13 @@ export async function POST(request: NextRequest) {
       leaderboard.push(newEntry);
     }
 
-    // Sort, filter and trim
     leaderboard = leaderboard
       .filter(e => Date.now() - e.timestamp < 30 * 24 * 60 * 60 * 1000)
       .sort((a, b) => b.gold - a.gold)
       .slice(0, MAX_LEADERBOARD_SIZE);
 
-    // Save leaderboard
     await redis.set(LEADERBOARD_KEY, leaderboard);
 
-    // Find new rank
     const newRank = leaderboard.findIndex(e => e.address === normalizedAddress) + 1;
 
     return NextResponse.json({ 
