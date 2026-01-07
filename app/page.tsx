@@ -274,6 +274,197 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
 
 // ============ COMPONENTS ============
 
+// Gold Particles Background
+function GoldParticles() {
+  const [particles, setParticles] = useState<Array<{id: number, left: number, size: number, duration: number, delay: number}>>([]);
+  
+  useEffect(() => {
+    const count = window.innerWidth < 768 ? 15 : 25;
+    const newParticles = Array.from({ length: count }, (_, i) => ({
+      id: i,
+      left: Math.random() * 100,
+      size: Math.random() * 4 + 2,
+      duration: Math.random() * 20 + 15,
+      delay: Math.random() * 20,
+    }));
+    setParticles(newParticles);
+  }, []);
+  
+  return (
+    <div className="fixed inset-0 pointer-events-none z-0 overflow-hidden">
+      {particles.map(p => (
+        <div
+          key={p.id}
+          className="absolute rounded-full opacity-0"
+          style={{
+            left: `${p.left}%`,
+            width: `${p.size}px`,
+            height: `${p.size}px`,
+            background: 'radial-gradient(circle, #D4AF37 0%, transparent 70%)',
+            animation: `globalFloat ${p.duration}s linear infinite`,
+            animationDelay: `${p.delay}s`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+// Ambient Glow Background
+function AmbientGlow() {
+  return (
+    <div 
+      className="fixed inset-0 pointer-events-none z-0"
+      style={{
+        background: `
+          radial-gradient(ellipse at 20% 20%, rgba(212, 175, 55, 0.03) 0%, transparent 50%),
+          radial-gradient(ellipse at 80% 80%, rgba(212, 175, 55, 0.03) 0%, transparent 50%),
+          radial-gradient(ellipse at 50% 50%, rgba(212, 175, 55, 0.02) 0%, transparent 70%)
+        `
+      }}
+    />
+  );
+}
+
+// Mine Visualization Component
+function MineVisualization({ upgrades }: { upgrades: typeof INITIAL_UPGRADES }) {
+  const totalUpgrades = Object.values(upgrades).reduce((sum, u) => sum + u.owned, 0);
+  
+  if (totalUpgrades === 0) {
+    return (
+      <div className="mt-4 p-4 bg-gradient-to-b from-[#2a1a0a] to-[#1a0f05] rounded-xl border border-[#3d2817]">
+        <div className="text-center text-sm text-[#D4AF37] mb-2">⛏️ Your Mine</div>
+        <div className="text-center text-gray-500 text-xs py-4">
+          Buy upgrades to build your mine!
+        </div>
+      </div>
+    );
+  }
+  
+  const level = Math.floor(totalUpgrades / 3) + 1;
+  const levelNames = ['Starter', 'Basic', 'Improved', 'Advanced', 'Professional', 'Industrial', 'Mega', 'Ultimate', 'Legendary', 'Mythical'];
+  const levelName = levelNames[Math.min(level - 1, levelNames.length - 1)];
+  
+  return (
+    <div className="mt-4 p-3 bg-gradient-to-b from-[#2a1a0a] to-[#1a0f05] rounded-xl border border-[#3d2817] overflow-hidden">
+      <div className="text-center text-sm text-[#D4AF37] mb-2">⛏️ {levelName} Mine (Lvl {level})</div>
+      <div className="relative h-32 bg-gradient-to-b from-[#2a1a0a] via-[#1a0f05] to-[#0f0a03] rounded-lg overflow-hidden">
+        {/* Background grid */}
+        <div className="absolute inset-0 opacity-20" style={{
+          background: `
+            repeating-linear-gradient(90deg, transparent, transparent 20px, rgba(60, 40, 20, 0.3) 20px, rgba(60, 40, 20, 0.3) 21px),
+            repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(60, 40, 20, 0.2) 20px, rgba(60, 40, 20, 0.2) 21px)
+          `
+        }} />
+        
+        {/* Gold veins */}
+        <div className="absolute inset-0">
+          {Array.from({ length: Math.min(totalUpgrades * 2, 20) }).map((_, i) => (
+            <div
+              key={`vein-${i}`}
+              className="absolute rounded-full"
+              style={{
+                left: `${10 + Math.random() * 80}%`,
+                top: `${10 + Math.random() * 80}%`,
+                width: `${6 + Math.random() * 6}px`,
+                height: `${6 + Math.random() * 6}px`,
+                background: 'radial-gradient(circle, #D4AF37 0%, #996515 70%, transparent 100%)',
+                animation: `veinGlow 2s ease-in-out infinite`,
+                animationDelay: `${Math.random() * 2}s`,
+              }}
+            />
+          ))}
+        </div>
+        
+        {/* Pickaxes on wall */}
+        <div className="absolute top-2 left-2 flex gap-1 flex-wrap max-w-[80px]">
+          {Array.from({ length: Math.min(upgrades.pickaxe.owned, 8) }).map((_, i) => (
+            <span key={`pick-${i}`} className="text-sm" style={{ animation: 'pickaxeSwing 1s ease-in-out infinite', animationDelay: `${i * 0.1}s` }}>⛏️</span>
+          ))}
+        </div>
+        
+        {/* Miners walking */}
+        <div className="absolute bottom-6 left-0 right-0">
+          {Array.from({ length: Math.min(upgrades.miner.owned, 5) }).map((_, i) => (
+            <span 
+              key={`miner-${i}`} 
+              className="absolute text-lg"
+              style={{ 
+                bottom: `${i * 8}px`,
+                animation: `minerWalk ${3 + i}s linear infinite`,
+                animationDelay: `${i * 0.8}s`
+              }}
+            >👷</span>
+          ))}
+        </div>
+        
+        {/* Drills */}
+        <div className="absolute right-2 top-1/2 -translate-y-1/2 flex flex-col gap-1">
+          {Array.from({ length: Math.min(upgrades.drill.owned, 4) }).map((_, i) => (
+            <span key={`drill-${i}`} className="text-lg" style={{ animation: 'drillSpin 0.5s linear infinite', animationDelay: `${i * 0.15}s` }}>🔧</span>
+          ))}
+        </div>
+        
+        {/* Excavators */}
+        <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex gap-2">
+          {Array.from({ length: Math.min(upgrades.excavator.owned, 3) }).map((_, i) => (
+            <span key={`exc-${i}`} className="text-xl" style={{ animation: 'excavatorDig 2s ease-in-out infinite', animationDelay: `${i * 0.5}s` }}>🚜</span>
+          ))}
+        </div>
+        
+        {/* Dynamite */}
+        <div className="absolute top-1/2 left-1/3 flex gap-3">
+          {Array.from({ length: Math.min(upgrades.dynamite.owned, 4) }).map((_, i) => (
+            <span key={`dyn-${i}`} className="text-lg" style={{ animation: 'dynamiteExplode 3s ease-in-out infinite', animationDelay: `${i * 0.7}s` }}>🧨</span>
+          ))}
+        </div>
+        
+        {/* Gold mines */}
+        <div className="absolute top-2 right-2 flex flex-col gap-1">
+          {Array.from({ length: Math.min(upgrades.goldmine.owned, 3) }).map((_, i) => (
+            <span key={`mine-${i}`} className="text-xl" style={{ animation: 'goldmineShine 3s ease-in-out infinite', animationDelay: `${i * 0.5}s` }}>🏔️</span>
+          ))}
+        </div>
+        
+        {/* Floating gold particles */}
+        <div className="absolute inset-0 pointer-events-none">
+          {Array.from({ length: Math.min(Math.floor(Object.values(upgrades).reduce((s, u) => s + u.owned * u.perSec, 0) / 10) + totalUpgrades, 15) }).map((_, i) => (
+            <div
+              key={`particle-${i}`}
+              className="absolute w-1 h-1 bg-[#D4AF37] rounded-full"
+              style={{
+                left: `${10 + Math.random() * 80}%`,
+                bottom: '20px',
+                animation: `floatParticle 4s ease-in-out infinite`,
+                animationDelay: `${Math.random() * 4}s`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Ad Banner Component (A-ADS)
+function AdBanner() {
+  return (
+    <div className="mt-4 p-3 bg-white/5 border border-white/10 rounded-xl">
+      <div className="text-[10px] text-gray-500 text-center uppercase tracking-wider mb-2">Advertisement</div>
+      <div className="bg-black/30 rounded-lg overflow-hidden min-h-[100px] flex items-center justify-center">
+        <iframe 
+          data-aa="2422886" 
+          src="//acceptable.a-ads.com/2422886/?size=Adaptive"
+          style={{ border: 0, padding: 0, width: '100%', height: '100px', overflow: 'hidden', display: 'block' }}
+        />
+      </div>
+      <div className="text-[10px] text-center text-gray-600 mt-2">
+        🔥 Ad revenue buys & burns $BG
+      </div>
+    </div>
+  );
+}
+
 function BurnNotification({ burn, onComplete }: { burn: { amount: string; buyer: string }; onComplete: () => void }) {
   useEffect(() => {
     const timer = setTimeout(onComplete, 4000);
@@ -1165,7 +1356,11 @@ export default function MinerGame() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white">
+    <div className="min-h-screen bg-[#0A0A0A] text-white relative">
+      {/* Background Effects */}
+      <AmbientGlow />
+      <GoldParticles />
+      
       {/* Burn Notifications */}
       {burnNotifications.map(burn => (
         <BurnNotification
@@ -1293,7 +1488,7 @@ export default function MinerGame() {
       )}
 
       {/* Header */}
-      <header className="flex justify-between items-center p-3 border-b border-[#D4AF37]/20">
+      <header className="flex justify-between items-center p-3 border-b border-[#D4AF37]/20 relative z-10">
         <div className="flex items-center gap-2">
           <span className="text-xl">⛏️</span>
           <span className="text-sm font-bold text-[#D4AF37]">BASEGOLD MINER</span>
@@ -1382,7 +1577,7 @@ export default function MinerGame() {
         ))}
       </div>
 
-      <main className="max-w-lg mx-auto p-4">
+      <main className="max-w-lg mx-auto p-4 relative z-10">
         {/* ============ GAME TAB ============ */}
         {activeTab === 'game' && (
           <>
@@ -1541,6 +1736,12 @@ export default function MinerGame() {
                 </button>
               ))}
             </div>
+            
+            {/* Mine Visualization */}
+            <MineVisualization upgrades={upgrades} />
+            
+            {/* Ad Banner */}
+            <AdBanner />
           </>
         )}
 
@@ -1988,6 +2189,61 @@ export default function MinerGame() {
         @keyframes floatUp {
           0% { opacity: 1; transform: translateY(0); }
           100% { opacity: 0; transform: translateY(-50px); }
+        }
+        
+        @keyframes globalFloat {
+          0% { opacity: 0; transform: translateY(100vh) rotate(0deg); }
+          10% { opacity: 0.6; }
+          90% { opacity: 0.6; }
+          100% { opacity: 0; transform: translateY(-100px) rotate(720deg); }
+        }
+        
+        @keyframes veinGlow {
+          0%, 100% { opacity: 0.6; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.2); }
+        }
+        
+        @keyframes pickaxeSwing {
+          0%, 100% { transform: rotate(-10deg); }
+          50% { transform: rotate(10deg); }
+        }
+        
+        @keyframes minerWalk {
+          0% { transform: translateX(-20px) scaleX(1); }
+          45% { transform: translateX(calc(100vw - 60px)) scaleX(1); }
+          50% { transform: translateX(calc(100vw - 60px)) scaleX(-1); }
+          95% { transform: translateX(-20px) scaleX(-1); }
+          100% { transform: translateX(-20px) scaleX(1); }
+        }
+        
+        @keyframes drillSpin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        
+        @keyframes excavatorDig {
+          0%, 100% { transform: rotate(0deg) translateY(0); }
+          25% { transform: rotate(-5deg) translateY(-3px); }
+          50% { transform: rotate(5deg) translateY(2px); }
+          75% { transform: rotate(-3deg) translateY(-1px); }
+        }
+        
+        @keyframes dynamiteExplode {
+          0%, 70%, 100% { transform: scale(1); filter: brightness(1); }
+          75% { transform: scale(1.3); filter: brightness(2); }
+          80% { transform: scale(0.9); filter: brightness(1.5); }
+        }
+        
+        @keyframes goldmineShine {
+          0%, 100% { filter: brightness(1) drop-shadow(0 0 5px rgba(212, 175, 55, 0.3)); }
+          50% { filter: brightness(1.3) drop-shadow(0 0 15px rgba(212, 175, 55, 0.8)); }
+        }
+        
+        @keyframes floatParticle {
+          0% { opacity: 0; transform: translateY(0); }
+          20% { opacity: 0.8; }
+          80% { opacity: 0.8; }
+          100% { opacity: 0; transform: translateY(-100px); }
         }
       `}</style>
     </div>
