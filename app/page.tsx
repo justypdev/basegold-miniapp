@@ -605,7 +605,7 @@ export default function MinerGame() {
     }
   }, [address]);
   
-  // Save game to server (requires valid session)
+  // Save game to server (no signature required, session validates identity)
   const saveGameToServer = useCallback(async () => {
     if (!address || !sessionId) {
       if (!sessionId) setSaveError('Session required - please reconnect wallet');
@@ -680,7 +680,7 @@ export default function MinerGame() {
     } finally {
       setIsSaving(false);
     }
-}, [address, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, lastClickTime]);
+  }, [address, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, lastClickTime, goldPerSecond]);
   
   // Auto-save reminder (prompts user to save periodically)
   const [showSaveReminder, setShowSaveReminder] = useState(false);
