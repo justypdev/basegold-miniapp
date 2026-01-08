@@ -10,7 +10,7 @@ import {
   TransactionStatusLabel,
   TransactionStatusAction 
 } from '@coinbase/onchainkit/transaction';
-import { ConnectWallet, Wallet, WalletDropdown, WalletDropdownFundLink } from '@coinbase/onchainkit/wallet';
+import { ConnectWallet, Wallet, WalletDropdown, WalletDropdownLink, WalletDropdownFundLink, WalletDropdownDisconnect } from '@coinbase/onchainkit/wallet';
 import { FundButton } from '@coinbase/onchainkit/fund';
 import { Avatar, Name } from '@coinbase/onchainkit/identity';
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
@@ -1696,6 +1696,10 @@ export default function MinerGame() {
               <Avatar className="w-5 h-5" />
               <Name className="text-xs" />
             </ConnectWallet>
+            <WalletDropdown>
+              <WalletDropdownFundLink />
+              <WalletDropdownDisconnect />
+            </WalletDropdown>
           </Wallet>
         </div>
       </header>
