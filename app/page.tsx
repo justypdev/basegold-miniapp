@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { sdk } from '@farcaster/frame-sdk';
-import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage, useConnect, useDisconnect } from 'wagmi';
 import { 
   Transaction, 
   TransactionButton, 
@@ -10,9 +10,7 @@ import {
   TransactionStatusLabel,
   TransactionStatusAction 
 } from '@coinbase/onchainkit/transaction';
-import { ConnectWallet, Wallet, WalletDropdown, WalletDropdownLink, WalletDropdownFundLink, WalletDropdownDisconnect } from '@coinbase/onchainkit/wallet';
 import { FundButton } from '@coinbase/onchainkit/fund';
-import { Avatar, Name } from '@coinbase/onchainkit/identity';
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
 
@@ -661,6 +659,9 @@ export default function MinerGame() {
   
   // Wallet
   const { address, isConnected } = useAccount();
+  const { connectors, connect, isPending: isConnecting } = useConnect();
+  const { disconnect } = useDisconnect();
+  const [showWalletModal, setShowWalletModal] = useState(false);
   const { data: ethBalance } = useBalance({ address });
   const { data: bgBalance } = useBalance({ address, token: BG_TOKEN });
   const publicClient = usePublicClient();
@@ -1572,6 +1573,68 @@ export default function MinerGame() {
         </div>
       )}
 
+      {/* Wallet Selection Modal */}
+      {showWalletModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setShowWalletModal(false)}>
+          <div className="bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-2xl p-6 max-w-sm w-full" onClick={e => e.stopPropagation()}>
+            <div className="text-center mb-6">
+              <div className="text-4xl mb-2">🔗</div>
+              <h2 className="text-xl font-bold text-[#D4AF37]">Connect Wallet</h2>
+              <p className="text-gray-400 text-sm mt-1">Choose your wallet to continue</p>
+            </div>
+            
+            <div className="space-y-3">
+              {connectors.map((connector) => {
+                // Determine wallet icon and name
+                const isMetaMask = connector.id === 'injected' || connector.name.toLowerCase().includes('metamask');
+                const isCoinbase = connector.name.toLowerCase().includes('coinbase');
+                
+                let icon = '👛';
+                let displayName = connector.name;
+                
+                if (isMetaMask) {
+                  icon = '🦊';
+                  displayName = 'MetaMask';
+                } else if (isCoinbase) {
+                  icon = '🔵';
+                  displayName = 'Coinbase Wallet';
+                }
+                
+                return (
+                  <button
+                    key={connector.uid}
+                    onClick={() => {
+                      connect({ connector });
+                      setShowWalletModal(false);
+                    }}
+                    disabled={isConnecting}
+                    className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
+                  >
+                    <span className="text-3xl">{icon}</span>
+                    <div className="text-left flex-1">
+                      <div className="text-white font-medium">{displayName}</div>
+                      <div className="text-xs text-gray-500">
+                        {isMetaMask && 'Browser extension'}
+                        {isCoinbase && 'Smart Wallet or Extension'}
+                        {!isMetaMask && !isCoinbase && 'Web3 Wallet'}
+                      </div>
+                    </div>
+                    <span className="text-gray-500">→</span>
+                  </button>
+                );
+              })}
+            </div>
+            
+            <button
+              onClick={() => setShowWalletModal(false)}
+              className="w-full mt-4 py-3 text-gray-400 hover:text-white transition-all text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Session Conflict Modal */}
       {showSessionConflict && conflictInfo && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
@@ -1691,16 +1754,42 @@ export default function MinerGame() {
           >
             {soundEnabled ? '🔊' : '🔇'}
           </button>
-          <Wallet>
-            <ConnectWallet>
-              <Avatar className="w-5 h-5" />
-              <Name className="text-xs" />
-            </ConnectWallet>
-            <WalletDropdown>
-              <WalletDropdownFundLink />
-              <WalletDropdownDisconnect />
-            </WalletDropdown>
-          </Wallet>
+          
+          {/* Custom Wallet Connection */}
+          {isConnected ? (
+            <div className="relative group">
+              <button className="flex items-center gap-2 px-3 py-2 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-lg hover:bg-[#D4AF37]/20 transition-all">
+                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#D4AF37] to-[#996515] flex items-center justify-center text-[10px] font-bold text-black">
+                  {address?.slice(2, 4).toUpperCase()}
+                </div>
+                <span className="text-xs text-[#D4AF37] font-medium">
+                  {address?.slice(0, 6)}...{address?.slice(-4)}
+                </span>
+                <span className="text-gray-500 text-xs">▼</span>
+              </button>
+              {/* Dropdown */}
+              <div className="absolute right-0 top-full mt-1 w-48 bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                <div className="p-2 border-b border-white/10">
+                  <div className="text-xs text-gray-400">Connected</div>
+                  <div className="text-sm text-white font-mono">{address?.slice(0, 10)}...{address?.slice(-6)}</div>
+                </div>
+                <button
+                  onClick={() => disconnect()}
+                  className="w-full px-4 py-3 text-left text-red-400 hover:bg-red-500/10 transition-all flex items-center gap-2 rounded-b-lg"
+                >
+                  <span>🚪</span>
+                  <span>Disconnect</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowWalletModal(true)}
+              className="px-4 py-2 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold text-sm rounded-lg hover:shadow-lg hover:shadow-[#D4AF37]/20 transition-all"
+            >
+              Connect
+            </button>
+          )}
         </div>
       </header>
 
@@ -2159,7 +2248,12 @@ export default function MinerGame() {
             {!isConnected && (
               <div className="mt-4 text-center">
                 <p className="text-gray-400 text-sm mb-2">Connect wallet to purchase</p>
-                <Wallet><ConnectWallet /></Wallet>
+                <button
+                  onClick={() => setShowWalletModal(true)}
+                  className="px-6 py-3 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold rounded-lg hover:shadow-lg hover:shadow-[#D4AF37]/20 transition-all"
+                >
+                  🔗 Connect Wallet
+                </button>
               </div>
             )}
 

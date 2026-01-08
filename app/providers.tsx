@@ -4,7 +4,7 @@ import { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { WagmiProvider, createConfig, http } from 'wagmi';
 import { base } from 'wagmi/chains';
-import { coinbaseWallet } from 'wagmi/connectors';
+import { coinbaseWallet, injected } from 'wagmi/connectors';
 import { OnchainKitProvider } from '@coinbase/onchainkit';
 
 const queryClient = new QueryClient();
@@ -12,9 +12,14 @@ const queryClient = new QueryClient();
 const wagmiConfig = createConfig({
   chains: [base],
   connectors: [
+    // Coinbase Smart Wallet
     coinbaseWallet({
       appName: 'BaseGold Miner',
-      preference: 'smartWalletOnly',
+      preference: 'all', // Changed from 'smartWalletOnly' to allow both smart wallet AND extension
+    }),
+    // MetaMask and other injected wallets (Rabby, Trust, etc.)
+    injected({
+      shimDisconnect: true,
     }),
   ],
   transports: {
