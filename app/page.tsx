@@ -1389,7 +1389,19 @@ export default function MinerGame() {
 
   useEffect(() => {
     const init = async () => {
-      try { await sdk.actions.ready(); } catch {}
+      // Try Farcaster SDK with a short timeout - don't block if not in Farcaster context
+      const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 1000));
+      
+      try {
+        await Promise.race([
+          sdk.actions.ready(),
+          timeoutPromise
+        ]);
+      } catch (e) {
+        // Ignore SDK errors - app works without Farcaster
+        console.log('Not in Farcaster context, continuing...');
+      }
+      
       setIsReady(true);
       sessionStartTime.current = Date.now();
     };
@@ -1584,46 +1596,106 @@ export default function MinerGame() {
             </div>
             
             <div className="space-y-3">
-              {connectors.map((connector) => {
-                // Determine wallet icon and name
-                const isMetaMask = connector.id === 'injected' || connector.name.toLowerCase().includes('metamask');
-                const isCoinbase = connector.name.toLowerCase().includes('coinbase');
-                
-                let icon = '👛';
-                let displayName = connector.name;
-                
-                if (isMetaMask) {
-                  icon = '🦊';
-                  displayName = 'MetaMask';
-                } else if (isCoinbase) {
-                  icon = '🔵';
-                  displayName = 'Coinbase Wallet';
-                }
+              {/* Check if we're on mobile */}
+              {(() => {
+                const isMobile = typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+                const hasEthereum = typeof window !== 'undefined' && !!window.ethereum;
+                const isInMetaMask = typeof window !== 'undefined' && window.ethereum?.isMetaMask;
                 
                 return (
-                  <button
-                    key={connector.uid}
-                    onClick={() => {
-                      connect({ connector });
-                      setShowWalletModal(false);
-                    }}
-                    disabled={isConnecting}
-                    className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
-                  >
-                    <span className="text-3xl">{icon}</span>
-                    <div className="text-left flex-1">
-                      <div className="text-white font-medium">{displayName}</div>
-                      <div className="text-xs text-gray-500">
-                        {isMetaMask && 'Browser extension'}
-                        {isCoinbase && 'Smart Wallet or Extension'}
-                        {!isMetaMask && !isCoinbase && 'Web3 Wallet'}
-                      </div>
-                    </div>
-                    <span className="text-gray-500">→</span>
-                  </button>
+                  <>
+                    {/* MetaMask Option */}
+                    {isMobile && !isInMetaMask ? (
+                      // Mobile Safari/Chrome - Deep link to MetaMask app
+                      <a
+                        href={`https://metamask.app.link/dapp/${typeof window !== 'undefined' ? window.location.host + window.location.pathname : 'basegold-miniapp.vercel.app'}`}
+                        className="w-full flex items-center gap-4 p-4 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 hover:border-orange-500/50 rounded-xl transition-all"
+                      >
+                        <span className="text-3xl">🦊</span>
+                        <div className="text-left flex-1">
+                          <div className="text-white font-medium">MetaMask</div>
+                          <div className="text-xs text-orange-400">Open in MetaMask app</div>
+                        </div>
+                        <span className="text-orange-400">↗</span>
+                      </a>
+                    ) : (
+                      // Desktop or already in MetaMask browser - use connector
+                      connectors.filter(c => c.id === 'injected' || c.name.toLowerCase().includes('metamask')).map((connector) => (
+                        <button
+                          key={connector.uid}
+                          onClick={() => {
+                            connect({ connector });
+                            setShowWalletModal(false);
+                          }}
+                          disabled={isConnecting}
+                          className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
+                        >
+                          <span className="text-3xl">🦊</span>
+                          <div className="text-left flex-1">
+                            <div className="text-white font-medium">MetaMask</div>
+                            <div className="text-xs text-gray-500">{hasEthereum ? 'Connect now' : 'Browser extension'}</div>
+                          </div>
+                          <span className="text-gray-500">→</span>
+                        </button>
+                      ))
+                    )}
+                    
+                    {/* Coinbase Wallet - works on both mobile and desktop */}
+                    {connectors.filter(c => c.name.toLowerCase().includes('coinbase')).map((connector) => (
+                      <button
+                        key={connector.uid}
+                        onClick={() => {
+                          connect({ connector });
+                          setShowWalletModal(false);
+                        }}
+                        disabled={isConnecting}
+                        className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
+                      >
+                        <span className="text-3xl">🔵</span>
+                        <div className="text-left flex-1">
+                          <div className="text-white font-medium">Coinbase Wallet</div>
+                          <div className="text-xs text-gray-500">Smart Wallet or Extension</div>
+                        </div>
+                        <span className="text-gray-500">→</span>
+                      </button>
+                    ))}
+                    
+                    {/* Other connectors */}
+                    {connectors.filter(c => 
+                      !c.name.toLowerCase().includes('coinbase') && 
+                      !c.name.toLowerCase().includes('metamask') &&
+                      c.id !== 'injected'
+                    ).map((connector) => (
+                      <button
+                        key={connector.uid}
+                        onClick={() => {
+                          connect({ connector });
+                          setShowWalletModal(false);
+                        }}
+                        disabled={isConnecting}
+                        className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
+                      >
+                        <span className="text-3xl">👛</span>
+                        <div className="text-left flex-1">
+                          <div className="text-white font-medium">{connector.name}</div>
+                          <div className="text-xs text-gray-500">Web3 Wallet</div>
+                        </div>
+                        <span className="text-gray-500">→</span>
+                      </button>
+                    ))}
+                  </>
                 );
-              })}
+              })()}
             </div>
+            
+            {/* Help text for mobile */}
+            {typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && !window.ethereum && (
+              <div className="mt-4 p-3 bg-white/5 rounded-lg">
+                <p className="text-xs text-gray-400 text-center">
+                  📱 <strong className="text-gray-300">Mobile?</strong> Tap MetaMask to open the app. Your progress saves to your wallet address!
+                </p>
+              </div>
+            )}
             
             <button
               onClick={() => setShowWalletModal(false)}
