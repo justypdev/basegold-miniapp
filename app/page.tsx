@@ -679,6 +679,7 @@ function VerificationStatus({ status, item }: { status: string; item: typeof SHO
 export default function MinerGame() {
   const [isReady, setIsReady] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [copiedAddress, setCopiedAddress] = useState(false);
   const sessionStartTime = useRef(Date.now());
   const clickTimestamps = useRef<number[]>([]);
   
@@ -1865,18 +1866,55 @@ export default function MinerGame() {
                 <span className="text-gray-500 text-xs">▼</span>
               </button>
               {/* Dropdown */}
-              <div className="absolute right-0 top-full mt-1 w-48 bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                <div className="p-2 border-b border-white/10">
-                  <div className="text-xs text-gray-400">Connected</div>
-                  <div className="text-sm text-white font-mono">{address?.slice(0, 10)}...{address?.slice(-6)}</div>
+              <div className="absolute right-0 top-full mt-1 w-56 bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                {/* Address Section */}
+                <div className="p-3 border-b border-white/10">
+                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Connected Wallet</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-sm text-white font-mono truncate">{address?.slice(0, 10)}...{address?.slice(-6)}</div>
+                    <button
+                      onClick={() => {
+                        if (address) {
+                          navigator.clipboard.writeText(address);
+                          setCopiedAddress(true);
+                          setTimeout(() => setCopiedAddress(false), 2000);
+                        }
+                      }}
+                      className="p-1.5 hover:bg-white/10 rounded-md transition-all"
+                      title="Copy address"
+                    >
+                      {copiedAddress ? (
+                        <span className="text-green-400 text-sm">✓</span>
+                      ) : (
+                        <span className="text-gray-400 text-sm">📋</span>
+                      )}
+                    </button>
+                  </div>
+                  {copiedAddress && (
+                    <div className="text-[10px] text-green-400 mt-1">Address copied!</div>
+                  )}
                 </div>
-                <button
-                  onClick={() => disconnect()}
-                  className="w-full px-4 py-3 text-left text-red-400 hover:bg-red-500/10 transition-all flex items-center gap-2 rounded-b-lg"
-                >
-                  <span>🚪</span>
-                  <span>Disconnect</span>
-                </button>
+                
+                {/* Actions */}
+                <div className="p-1">
+                  <a
+                    href={`https://basescan.org/address/${address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full px-3 py-2 text-left text-gray-300 hover:bg-white/5 transition-all flex items-center gap-2 rounded-lg text-sm"
+                  >
+                    <span>🔍</span>
+                    <span>View on BaseScan</span>
+                    <span className="ml-auto text-gray-500 text-xs">↗</span>
+                  </a>
+                  <button
+                    onClick={() => disconnect()}
+                    className="w-full px-3 py-2 text-left text-red-400 hover:bg-red-500/10 transition-all flex items-center gap-2 rounded-lg text-sm"
+                  >
+                    <span>🚪</span>
+                    <span>Disconnect</span>
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
