@@ -370,6 +370,7 @@ interface VerifiedBonuses {
   maxCombo: number;
   activeBoost: ActiveBoost | null;
   instantGoldPending: number;
+  botCount: number;
 }
 
 function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: number): VerifiedBonuses {
@@ -379,6 +380,7 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
   let maxCombo = 10;
   let activeBoost: ActiveBoost | null = null;
   let instantGoldPending = 0;
+  let botCount = 0;
 
   purchases.forEach(purchase => {
     const item = matchEthToItem(purchase.ethAmount);
@@ -390,6 +392,7 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
         break;
       case 'permanent_passive':
         bonusPassive += item.effect.amount || 100;
+        botCount++; // Count Auto-Miner Bots
         break;
       case 'cosmetic':
         hasCrown = true;
@@ -421,7 +424,7 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
     }
   });
 
-  return { bonusClick, bonusPassive, hasCrown, maxCombo, activeBoost, instantGoldPending };
+  return { bonusClick, bonusPassive, hasCrown, maxCombo, activeBoost, instantGoldPending, botCount };
 }
 
 // ============ COMPONENTS ============
@@ -479,8 +482,8 @@ function AmbientGlow() {
 }
 
 // Mine Visualization Component
-function MineVisualization({ upgrades }: { upgrades: typeof INITIAL_UPGRADES }) {
-  const totalUpgrades = Object.values(upgrades).reduce((sum, u) => sum + u.owned, 0);
+function MineVisualization({ upgrades, botCount = 0 }: { upgrades: typeof INITIAL_UPGRADES; botCount?: number }) {
+  const totalUpgrades = Object.values(upgrades).reduce((sum, u) => sum + u.owned, 0) + botCount;
   
   if (totalUpgrades === 0) {
     return (
@@ -577,6 +580,23 @@ function MineVisualization({ upgrades }: { upgrades: typeof INITIAL_UPGRADES }) 
             <span key={`mine-${i}`} className="text-xl" style={{ animation: 'goldmineShine 3s ease-in-out infinite', animationDelay: `${i * 0.5}s` }}>🏔️</span>
           ))}
         </div>
+        
+        {/* Auto-Miner Bots (premium item) */}
+        {botCount > 0 && (
+          <div className="absolute bottom-2 right-4 flex gap-1">
+            {Array.from({ length: Math.min(botCount, 5) }).map((_, i) => (
+              <span 
+                key={`bot-${i}`} 
+                className="text-lg"
+                style={{ 
+                  animation: 'botWork 1.5s ease-in-out infinite',
+                  animationDelay: `${i * 0.3}s`,
+                  filter: 'drop-shadow(0 0 4px rgba(100, 200, 255, 0.6))'
+                }}
+              >🤖</span>
+            ))}
+          </div>
+        )}
         
         {/* Floating gold particles */}
         <div className="absolute inset-0 pointer-events-none">
@@ -2125,7 +2145,7 @@ export default function MinerGame() {
             </div>
             
             {/* Mine Visualization */}
-            <MineVisualization upgrades={upgrades} />
+            <MineVisualization upgrades={upgrades} botCount={verifiedBonuses.botCount} />
             
             {/* Ad Banner */}
             <AdBanner />
@@ -2636,6 +2656,13 @@ export default function MinerGame() {
           20% { opacity: 0.8; }
           80% { opacity: 0.8; }
           100% { opacity: 0; transform: translateY(-100px); }
+        }
+        
+        @keyframes botWork {
+          0%, 100% { transform: translateY(0) rotate(0deg); }
+          25% { transform: translateY(-3px) rotate(-5deg); }
+          50% { transform: translateY(0) rotate(0deg); }
+          75% { transform: translateY(-3px) rotate(5deg); }
         }
       `}</style>
     </div>
