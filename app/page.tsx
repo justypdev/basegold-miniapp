@@ -295,11 +295,11 @@ const SHOP_ITEMS = [
   {
     id: 'burn_booster',
     name: '🔥 Burn Booster',
-    description: '100% goes directly to burn!',
+    description: '+5/click, +25/sec, 100% burns BG!',
     priceETH: '0.0003',
     priceUSD: '~$1.00',
     emoji: '🔥',
-    effect: { type: 'burn_contribution' as const, amount: 1 }
+    effect: { type: 'burn_bonus' as const, clickAmount: 5, passiveAmount: 25 }
   },
 ];
 
@@ -412,6 +412,14 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
       case 'instant_gold':
         // Track for display, actual gold added when verified
         instantGoldPending++;
+        break;
+      case 'burn_bonus':
+        // Burn Booster: gives both click and passive bonuses
+        bonusClick += item.effect.clickAmount || 5;
+        bonusPassive += item.effect.passiveAmount || 25;
+        break;
+      case 'burn_contribution':
+        // Legacy: pure burn with no bonus (backwards compatibility)
         break;
     }
   });
@@ -2156,6 +2164,7 @@ export default function MinerGame() {
                     {verificationSuccess.effect.type === 'instant_gold' && `+${verificationSuccess.effect.hours} hour(s) of gold`}
                     {verificationSuccess.effect.type === 'cosmetic' && `Crown unlocked!`}
                     {verificationSuccess.effect.type === 'burn_contribution' && `BG burned!`}
+                    {verificationSuccess.effect.type === 'burn_bonus' && `+${verificationSuccess.effect.clickAmount}/click, +${verificationSuccess.effect.passiveAmount}/sec + BG burned!`}
                   </div>
                 </div>
                 <div className="text-xs text-gray-400 mt-2">Transaction confirmed on Base</div>
