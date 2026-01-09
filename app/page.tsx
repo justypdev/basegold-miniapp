@@ -418,9 +418,6 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
         bonusClick += item.effect.clickAmount || 5;
         bonusPassive += item.effect.passiveAmount || 25;
         break;
-      case 'burn_contribution':
-        // Legacy: pure burn with no bonus (backwards compatibility)
-        break;
     }
   });
 
@@ -2163,7 +2160,6 @@ export default function MinerGame() {
                     {verificationSuccess.effect.type === 'boost' && `${verificationSuccess.effect.multiplier}x boost for ${(verificationSuccess.effect.duration || 0) / 60000} min`}
                     {verificationSuccess.effect.type === 'instant_gold' && `+${verificationSuccess.effect.hours} hour(s) of gold`}
                     {verificationSuccess.effect.type === 'cosmetic' && `Crown unlocked!`}
-                    {verificationSuccess.effect.type === 'burn_contribution' && `BG burned!`}
                     {verificationSuccess.effect.type === 'burn_bonus' && `+${verificationSuccess.effect.clickAmount}/click, +${verificationSuccess.effect.passiveAmount}/sec + BG burned!`}
                   </div>
                 </div>
