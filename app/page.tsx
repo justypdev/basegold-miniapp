@@ -10,7 +10,7 @@ import {
   TransactionStatusLabel,
   TransactionStatusAction 
 } from '@coinbase/onchainkit/transaction';
-import { FundButton } from '@coinbase/onchainkit/fund';
+
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
 
@@ -1913,12 +1913,20 @@ export default function MinerGame() {
             </div>
           </div>
           <div className="flex gap-2">
-            <FundButton className="!px-4 !py-2 !bg-gradient-to-r !from-[#627EEA] !to-[#4C5EAA] !text-white !font-semibold !text-xs !rounded-lg !border-0 hover:!shadow-lg hover:!shadow-[#627EEA]/30 !transition-all" />
+            <a 
+              href="https://pay.coinbase.com/buy/select-asset?appId=base" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="h-9 px-4 bg-[#627EEA] text-white font-semibold text-xs rounded-lg hover:bg-[#5470D8] transition-all flex items-center gap-1.5"
+            >
+              <span>💳</span>
+              <span>Fund</span>
+            </a>
             <a 
               href="https://relay.link/bridge/base" 
               target="_blank" 
               rel="noopener noreferrer" 
-              className="px-4 py-2 bg-white/5 border border-white/20 text-gray-300 font-semibold text-xs rounded-lg hover:bg-white/10 hover:border-white/30 hover:text-white transition-all flex items-center gap-1.5"
+              className="h-9 px-4 bg-white/5 border border-white/20 text-gray-300 font-semibold text-xs rounded-lg hover:bg-white/10 hover:border-white/30 hover:text-white transition-all flex items-center gap-1.5"
             >
               <span>🌉</span>
               <span>Bridge</span>
