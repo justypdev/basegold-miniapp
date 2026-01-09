@@ -1866,62 +1866,69 @@ export default function MinerGame() {
       </header>
 
       {/* Burn Ticker */}
-      <div className="bg-gradient-to-r from-red-900/30 via-orange-900/30 to-red-900/30 border-b border-orange-500/30 py-2 px-4">
+      <div className="bg-gradient-to-r from-red-900/20 via-orange-900/20 to-red-900/20 border-b border-orange-500/20 py-2 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-2">
-            <span className="text-lg animate-pulse">🔥</span>
+            <span className="text-base animate-pulse drop-shadow-lg">🔥</span>
             <div>
-              <div className="text-xs text-gray-400">Total Burned</div>
-              <div className="text-orange-400 font-bold font-mono">{totalBurned.toFixed(4)} BG</div>
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">Total Burned</div>
+              <div className="text-orange-400 font-bold font-mono text-sm">{totalBurned.toFixed(4)} BG</div>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xs text-gray-400">Circulating</div>
-            <div className="text-[#D4AF37] font-mono">{(INITIAL_SUPPLY - totalBurned).toFixed(2)} / 10,000</div>
+            <div className="text-[10px] text-gray-500 uppercase tracking-wider">Circulating</div>
+            <div className="text-[#D4AF37] font-mono text-sm">{(INITIAL_SUPPLY - totalBurned).toFixed(2)} / 10,000</div>
           </div>
         </div>
       </div>
 
       {/* Balances */}
-      <div className="bg-gradient-to-r from-[#D4AF37]/10 via-[#996515]/10 to-[#D4AF37]/10 border-b border-[#D4AF37]/30 py-3 px-4">
+      <div className="bg-gradient-to-r from-[#D4AF37]/10 via-[#996515]/5 to-[#D4AF37]/10 border-b border-[#D4AF37]/20 py-3 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] flex items-center justify-center text-[#996515] font-bold text-sm border-2 border-[#996515]">BG</div>
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] flex items-center justify-center text-[#996515] font-bold text-sm border-2 border-[#996515] shadow-lg shadow-[#D4AF37]/20">BG</div>
             <div>
-              <div className="text-xs text-gray-400">Your BaseGold</div>
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">Your BaseGold</div>
               <div className="text-xl font-bold text-[#D4AF37] font-mono">
                 {isConnected && bgBalance ? parseFloat(bgBalance.formatted).toFixed(4) : '0.0000'}
               </div>
             </div>
           </div>
-          <button onClick={() => setActiveTab('buy')} className="px-4 py-2 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold text-sm rounded-lg">
-            🛒 Buy BG
+          <button onClick={() => setActiveTab('buy')} className="px-5 py-2.5 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold text-sm rounded-xl hover:shadow-lg hover:shadow-[#D4AF37]/30 transition-all flex items-center gap-1.5">
+            <span>🛒</span>
+            <span>Buy BG</span>
           </button>
         </div>
       </div>
 
-      <div className="bg-gradient-to-r from-[#627EEA]/10 via-[#3C4C8C]/10 to-[#627EEA]/10 border-b border-[#627EEA]/30 py-2 px-4">
+      <div className="bg-gradient-to-r from-[#627EEA]/5 via-transparent to-[#627EEA]/5 border-b border-white/10 py-2 px-4">
         <div className="flex justify-between items-center max-w-lg mx-auto">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-[#627EEA] flex items-center justify-center text-white font-bold text-xs">Ξ</div>
+            <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#627EEA] to-[#3C4C8C] flex items-center justify-center text-white font-bold text-xs shadow-lg shadow-[#627EEA]/20">Ξ</div>
             <div>
-              <div className="text-xs text-gray-400">Your ETH</div>
-              <div className="text-lg font-bold text-[#627EEA] font-mono">
+              <div className="text-[10px] text-gray-500 uppercase tracking-wider">Your ETH</div>
+              <div className="text-base font-bold text-white font-mono">
                 {isConnected && ethBalance ? parseFloat(ethBalance.formatted).toFixed(4) : '0.0000'}
               </div>
             </div>
           </div>
           <div className="flex gap-2">
-            <FundButton className="px-3 py-1.5 bg-[#627EEA] text-white font-medium text-xs rounded-lg" />
-            <a href="https://relay.link/bridge/base" target="_blank" rel="noopener noreferrer" className="px-3 py-1.5 bg-[#627EEA]/20 border border-[#627EEA]/50 text-[#627EEA] font-medium text-xs rounded-lg hover:bg-[#627EEA]/30">
-              🌉 Bridge
+            <FundButton className="!px-4 !py-2 !bg-gradient-to-r !from-[#627EEA] !to-[#4C5EAA] !text-white !font-semibold !text-xs !rounded-lg !border-0 hover:!shadow-lg hover:!shadow-[#627EEA]/30 !transition-all" />
+            <a 
+              href="https://relay.link/bridge/base" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="px-4 py-2 bg-white/5 border border-white/20 text-gray-300 font-semibold text-xs rounded-lg hover:bg-white/10 hover:border-white/30 hover:text-white transition-all flex items-center gap-1.5"
+            >
+              <span>🌉</span>
+              <span>Bridge</span>
             </a>
           </div>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-white/10 overflow-x-auto">
+      <div className="flex border-b border-white/10 overflow-x-auto bg-black/20 backdrop-blur-sm">
         {[
           { id: 'game', label: '⛏️ Mine' },
           { id: 'shop', label: '💎 Shop' },
@@ -1932,7 +1939,7 @@ export default function MinerGame() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`flex-1 py-3 text-xs font-medium transition-all whitespace-nowrap px-2 ${activeTab === tab.id ? 'text-[#D4AF37] border-b-2 border-[#D4AF37] bg-[#D4AF37]/5' : 'text-gray-500'}`}
+            className={`flex-1 py-3 text-xs font-semibold transition-all whitespace-nowrap px-2 ${activeTab === tab.id ? 'text-[#D4AF37] border-b-2 border-[#D4AF37] bg-[#D4AF37]/10' : 'text-gray-500 hover:text-gray-400'}`}
           >
             {tab.label}
           </button>
@@ -1944,22 +1951,22 @@ export default function MinerGame() {
         {activeTab === 'game' && (
           <>
             {/* Stats */}
-            <div className="grid grid-cols-4 gap-2 mb-2 p-3 bg-black/50 rounded-xl border border-white/10">
-              <div className="text-center">
-                <div className="text-lg font-bold text-[#D4AF37]">{formatNumber(gold)}</div>
-                <div className="text-[10px] text-gray-500">GOLD</div>
+            <div className="grid grid-cols-4 gap-1 mb-3 p-2 bg-gradient-to-b from-black/60 to-black/40 rounded-xl border border-white/10 backdrop-blur-sm">
+              <div className="text-center p-2">
+                <div className="text-lg font-bold text-[#D4AF37] font-mono">{formatNumber(gold)}</div>
+                <div className="text-[9px] text-gray-500 uppercase tracking-widest">Gold</div>
               </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-[#D4AF37]">{goldPerClick * clickMultiplier}</div>
-                <div className="text-[10px] text-gray-500">PER CLICK</div>
+              <div className="text-center p-2 border-l border-white/10">
+                <div className="text-lg font-bold text-white font-mono">{goldPerClick * clickMultiplier}</div>
+                <div className="text-[9px] text-gray-500 uppercase tracking-widest">Per Click</div>
               </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-[#D4AF37]">{formatNumber(goldPerSecond)}</div>
-                <div className="text-[10px] text-gray-500">PER SEC</div>
+              <div className="text-center p-2 border-l border-white/10">
+                <div className="text-lg font-bold text-white font-mono">{formatNumber(goldPerSecond)}</div>
+                <div className="text-[9px] text-gray-500 uppercase tracking-widest">Per Sec</div>
               </div>
-              <div className="text-center">
-                <div className="text-lg font-bold text-[#D4AF37]">x{combo}</div>
-                <div className="text-[10px] text-gray-500">COMBO</div>
+              <div className="text-center p-2 border-l border-white/10">
+                <div className={`text-lg font-bold font-mono ${combo >= 5 ? 'text-orange-400' : combo > 1 ? 'text-[#D4AF37]' : 'text-white'}`}>x{combo}</div>
+                <div className="text-[9px] text-gray-500 uppercase tracking-widest">Combo</div>
               </div>
             </div>
             
@@ -1996,10 +2003,10 @@ export default function MinerGame() {
                   <button
                    onClick={() => saveGameToServer()}
                     disabled={isSaving}
-                    className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
+                    className={`px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition-all ${
                       isSaving 
-                        ? 'bg-gray-600 text-gray-400' 
-                        : 'bg-[#D4AF37]/20 border border-[#D4AF37]/50 text-[#D4AF37] hover:bg-[#D4AF37]/30'
+                        ? 'bg-gray-700/50 text-gray-400 border border-gray-600' 
+                        : 'bg-gradient-to-r from-[#D4AF37]/20 to-[#996515]/20 border border-[#D4AF37]/40 text-[#D4AF37] hover:border-[#D4AF37]/60 hover:shadow-lg hover:shadow-[#D4AF37]/10'
                     }`}
                   >
                     {isSaving ? (
@@ -2015,14 +2022,16 @@ export default function MinerGame() {
                   </button>
                   
                   {lastSaveTime.current > 0 && (
-                    <span className="text-[10px] text-gray-500">
-                      Last saved: {new Date(lastSaveTime.current).toLocaleTimeString()}
+                    <span className="text-[10px] text-gray-500 flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
+                      Saved {new Date(lastSaveTime.current).toLocaleTimeString()}
                     </span>
                   )}
                 </div>
                 
-                <p className="text-[10px] text-gray-500 text-center mt-1">
-                  🔐 Saved securely to server
+                <p className="text-[10px] text-gray-500/80 text-center mt-1.5 flex items-center justify-center gap-1">
+                  <span>🔐</span>
+                  <span>Saved securely to server</span>
                 </p>
               </div>
             )}
@@ -2037,29 +2046,29 @@ export default function MinerGame() {
 
             {/* On-Chain Verified Bonuses */}
             {(verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || hasCrown || boostEndTime) && (
-              <div className="mb-4 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
-                <div className="text-xs text-green-300 font-medium mb-2 text-center flex items-center justify-center gap-2">
-                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                  On-Chain Verified Bonuses
+              <div className="mb-4 p-3 bg-gradient-to-b from-green-500/10 to-green-500/5 border border-green-500/30 rounded-xl">
+                <div className="text-xs text-green-400 font-semibold mb-2 text-center flex items-center justify-center gap-2">
+                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></span>
+                  <span>On-Chain Verified Bonuses</span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   {verifiedBonuses.bonusClick > 0 && (
-                    <div className="bg-green-500/20 rounded p-2 text-center">
-                      <div className="text-green-400 font-bold">+{verifiedBonuses.bonusClick}</div>
-                      <div className="text-green-300">per click</div>
+                    <div className="bg-green-500/20 rounded-lg p-2.5 text-center border border-green-500/20">
+                      <div className="text-green-400 font-bold text-base">+{verifiedBonuses.bonusClick}</div>
+                      <div className="text-green-300/80 text-[10px] uppercase tracking-wider">per click</div>
                     </div>
                   )}
                   {verifiedBonuses.bonusPassive > 0 && (
-                    <div className="bg-green-500/20 rounded p-2 text-center">
-                      <div className="text-green-400 font-bold">+{verifiedBonuses.bonusPassive}</div>
-                      <div className="text-green-300">per second</div>
+                    <div className="bg-green-500/20 rounded-lg p-2.5 text-center border border-green-500/20">
+                      <div className="text-green-400 font-bold text-base">+{verifiedBonuses.bonusPassive}</div>
+                      <div className="text-green-300/80 text-[10px] uppercase tracking-wider">per second</div>
                     </div>
                   )}
                 </div>
                 {boostEndTime && (
-                  <div className="mt-2 p-2 bg-yellow-500/20 rounded text-center">
+                  <div className="mt-2 p-2.5 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-lg text-center border border-yellow-500/30">
                     <div className="text-yellow-400 font-bold">⚡ {clickMultiplier}x BOOST</div>
-                    <div className="text-yellow-300 text-xs">{formatTime(boostRemaining)} remaining</div>
+                    <div className="text-yellow-300/80 text-[10px] uppercase tracking-wider">{formatTime(boostRemaining)} remaining</div>
                   </div>
                 )}
               </div>
@@ -2078,22 +2087,25 @@ export default function MinerGame() {
             </div>
 
             {/* Upgrades */}
-            <h3 className="text-[#D4AF37] mb-2">⚡ Upgrades</h3>
+            <h3 className="text-[#D4AF37] mb-2 text-sm font-semibold flex items-center gap-2">
+              <span>⚡</span>
+              <span>Upgrades</span>
+            </h3>
             <div className="grid grid-cols-2 gap-2">
               {Object.entries(upgrades).map(([key, upgrade]) => (
                 <button
                   key={key}
                   onClick={() => buyUpgrade(key as keyof typeof upgrades)}
                   disabled={gold < upgrade.cost}
-                  className={`p-2 rounded-lg border transition-all text-left text-sm ${gold >= upgrade.cost ? 'bg-[#D4AF37]/10 border-[#D4AF37]/50 hover:bg-[#D4AF37]/20' : 'bg-white/5 border-white/10 opacity-50'}`}
+                  className={`p-2.5 rounded-xl border transition-all text-left text-sm ${gold >= upgrade.cost ? 'bg-gradient-to-br from-[#D4AF37]/15 to-[#D4AF37]/5 border-[#D4AF37]/40 hover:border-[#D4AF37]/60 hover:shadow-lg hover:shadow-[#D4AF37]/10' : 'bg-white/5 border-white/10 opacity-50'}`}
                 >
-                  <div className="flex items-center gap-1 mb-1">
-                    <span>{upgrade.emoji}</span>
-                    <span className="text-xs font-medium">{upgrade.name}</span>
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <span className="text-base">{upgrade.emoji}</span>
+                    <span className="text-xs font-semibold text-white">{upgrade.name}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-[#D4AF37] text-xs">{formatNumber(upgrade.cost)}</span>
-                    <span className="text-gray-500 text-xs">x{upgrade.owned}</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-[#D4AF37] text-xs font-mono">{formatNumber(upgrade.cost)}</span>
+                    <span className="text-gray-400 text-[10px] bg-white/10 px-1.5 py-0.5 rounded">x{upgrade.owned}</span>
                   </div>
                 </button>
               ))}
