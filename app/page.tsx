@@ -1977,7 +1977,7 @@ export default function MinerGame() {
           </div>
           <div className="flex gap-2">
             <a 
-              href={`https://pay.coinbase.com/buy/select-asset?destinationWallets=%5B%7B%22address%22%3A%22${address || ''}%22%2C%22blockchains%22%3A%5B%22base%22%5D%7D%5D&defaultAsset=ETH`}
+              href="https://www.coinbase.com/how-to-buy/ethereum"
               target="_blank" 
               rel="noopener noreferrer" 
               className="h-9 px-4 bg-[#627EEA] text-white font-semibold text-xs rounded-lg hover:bg-[#5470D8] transition-all flex items-center gap-1.5"
@@ -2208,13 +2208,13 @@ export default function MinerGame() {
                 <div className="text-xs text-gray-400 mb-3">Shop purchases are paid in ETH (which buys & burns BG automatically)</div>
                 <div className="flex gap-2">
                   <a 
-                    href={`https://pay.coinbase.com/buy/select-asset?destinationWallets=%5B%7B%22address%22%3A%22${address || ''}%22%2C%22blockchains%22%3A%5B%22base%22%5D%7D%5D&defaultAsset=ETH`}
+                    href="https://www.coinbase.com/how-to-buy/ethereum"
                     target="_blank" 
                     rel="noopener noreferrer" 
                     className="flex-1 py-2 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all flex items-center justify-center gap-1.5"
                   >
                     <span>💳</span>
-                    <span>Buy ETH with Card</span>
+                    <span>Buy ETH</span>
                   </a>
                   <a 
                     href="https://relay.link/bridge/base" 
@@ -2473,12 +2473,12 @@ export default function MinerGame() {
               </div>
               <div className="flex gap-2">
                 <a 
-                  href={`https://pay.coinbase.com/buy/select-asset?destinationWallets=%5B%7B%22address%22%3A%22${address || ''}%22%2C%22blockchains%22%3A%5B%22base%22%5D%7D%5D&defaultAsset=ETH`}
+                  href="https://www.coinbase.com/how-to-buy/ethereum"
                   target="_blank" 
                   rel="noopener noreferrer" 
                   className="flex-1 py-2.5 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all"
                 >
-                  💳 Buy ETH with Card
+                  💳 Buy ETH
                 </a>
                 <a 
                   href="https://relay.link/bridge/base" 
