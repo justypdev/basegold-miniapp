@@ -10,6 +10,7 @@ import {
   TransactionStatusLabel,
   TransactionStatusAction 
 } from '@coinbase/onchainkit/transaction';
+import { FundButton } from '@coinbase/onchainkit/fund';
 
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
@@ -1976,15 +1977,9 @@ export default function MinerGame() {
             </div>
           </div>
           <div className="flex gap-2">
-            <a 
-              href="https://www.coinbase.com/how-to-buy/ethereum"
-              target="_blank" 
-              rel="noopener noreferrer" 
+            <FundButton 
               className="h-9 px-4 bg-[#627EEA] text-white font-semibold text-xs rounded-lg hover:bg-[#5470D8] transition-all flex items-center gap-1.5"
-            >
-              <span>💳</span>
-              <span>Buy ETH</span>
-            </a>
+            />
             <a 
               href="https://relay.link/bridge/base" 
               target="_blank" 
@@ -2207,15 +2202,11 @@ export default function MinerGame() {
                 </div>
                 <div className="text-xs text-gray-400 mb-3">Shop purchases are paid in ETH (which buys & burns BG automatically)</div>
                 <div className="flex gap-2">
-                  <a 
-                    href="https://www.coinbase.com/how-to-buy/ethereum"
-                    target="_blank" 
-                    rel="noopener noreferrer" 
-                    className="flex-1 py-2 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all flex items-center justify-center gap-1.5"
-                  >
-                    <span>💳</span>
-                    <span>Buy ETH</span>
-                  </a>
+                  <div className="flex-1">
+                    <FundButton 
+                      className="w-full py-2 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all"
+                    />
+                  </div>
                   <a 
                     href="https://relay.link/bridge/base" 
                     target="_blank" 
@@ -2472,14 +2463,11 @@ export default function MinerGame() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <a 
-                  href="https://www.coinbase.com/how-to-buy/ethereum"
-                  target="_blank" 
-                  rel="noopener noreferrer" 
-                  className="flex-1 py-2.5 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all"
-                >
-                  💳 Buy ETH
-                </a>
+                <div className="flex-1">
+                  <FundButton 
+                    className="w-full py-2.5 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all"
+                  />
+                </div>
                 <a 
                   href="https://relay.link/bridge/base" 
                   target="_blank" 
