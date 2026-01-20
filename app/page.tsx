@@ -1977,13 +1977,13 @@ export default function MinerGame() {
           </div>
           <div className="flex gap-2">
             <a 
-              href="https://pay.coinbase.com/buy/select-asset?appId=base" 
+              href={`https://pay.coinbase.com/buy/select-asset?destinationWallets=%5B%7B%22address%22%3A%22${address || ''}%22%2C%22blockchains%22%3A%5B%22base%22%5D%7D%5D&defaultAsset=ETH`}
               target="_blank" 
               rel="noopener noreferrer" 
               className="h-9 px-4 bg-[#627EEA] text-white font-semibold text-xs rounded-lg hover:bg-[#5470D8] transition-all flex items-center gap-1.5"
             >
               <span>💳</span>
-              <span>Fund</span>
+              <span>Buy ETH</span>
             </a>
             <a 
               href="https://relay.link/bridge/base" 
@@ -2195,8 +2195,39 @@ export default function MinerGame() {
           <>
             <div className="text-center mb-4">
               <h2 className="text-xl font-bold text-[#D4AF37] mb-1">💎 Premium Shop</h2>
-              <p className="text-xs text-gray-400">All purchases verified on Base blockchain 🔗</p>
+              <p className="text-xs text-gray-400">Pay with ETH → Contract burns BG 🔥</p>
             </div>
+
+            {/* ETH Balance Warning */}
+            {isConnected && ethBalance && parseFloat(ethBalance.formatted) < 0.0005 && (
+              <div className="mb-4 p-4 bg-red-500/10 border border-red-500/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-red-400">⚠️</span>
+                  <span className="text-red-400 font-medium">You need ETH to buy items</span>
+                </div>
+                <div className="text-xs text-gray-400 mb-3">Shop purchases are paid in ETH (which buys & burns BG automatically)</div>
+                <div className="flex gap-2">
+                  <a 
+                    href={`https://pay.coinbase.com/buy/select-asset?destinationWallets=%5B%7B%22address%22%3A%22${address || ''}%22%2C%22blockchains%22%3A%5B%22base%22%5D%7D%5D&defaultAsset=ETH`}
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="flex-1 py-2 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <span>💳</span>
+                    <span>Buy ETH with Card</span>
+                  </a>
+                  <a 
+                    href="https://relay.link/bridge/base" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="py-2 px-4 bg-white/10 border border-white/20 text-gray-300 font-semibold text-sm rounded-lg hover:bg-white/20 transition-all flex items-center gap-1.5"
+                  >
+                    <span>🌉</span>
+                    <span>Bridge</span>
+                  </a>
+                </div>
+              </div>
+            )}
 
             {/* Verification in Progress */}
             {pendingVerification && (
@@ -2428,15 +2459,45 @@ export default function MinerGame() {
         {activeTab === 'buy' && (
           <>
             <div className="text-center mb-4">
-              <h2 className="text-xl font-bold text-[#D4AF37] mb-1">🛒 Buy BaseGold</h2>
+              <h2 className="text-xl font-bold text-[#D4AF37] mb-1">🛒 Get Tokens</h2>
             </div>
 
+            {/* Need ETH for Shop */}
+            <div className="mb-4 p-4 bg-[#627EEA]/10 border border-[#627EEA]/30 rounded-xl">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-[#627EEA]/20 flex items-center justify-center text-lg">Ξ</div>
+                <div>
+                  <div className="font-medium text-white">Need ETH for Shop?</div>
+                  <div className="text-xs text-gray-400">Shop purchases require ETH (not BG)</div>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <a 
+                  href={`https://pay.coinbase.com/buy/select-asset?destinationWallets=%5B%7B%22address%22%3A%22${address || ''}%22%2C%22blockchains%22%3A%5B%22base%22%5D%7D%5D&defaultAsset=ETH`}
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="flex-1 py-2.5 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all"
+                >
+                  💳 Buy ETH with Card
+                </a>
+                <a 
+                  href="https://relay.link/bridge/base" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="py-2.5 px-4 bg-white/10 border border-white/20 text-gray-300 font-semibold text-sm rounded-lg hover:bg-white/20 transition-all"
+                >
+                  🌉 Bridge
+                </a>
+              </div>
+            </div>
+
+            {/* BG Balance */}
             <div className="mb-4 p-4 bg-gradient-to-br from-[#D4AF37]/20 to-[#996515]/20 border border-[#D4AF37]/30 rounded-xl">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] flex items-center justify-center text-[#996515] font-bold border-2 border-[#996515]">BG</div>
                   <div>
-                    <div className="text-xs text-gray-400">Your Balance</div>
+                    <div className="text-xs text-gray-400">Your BG Balance</div>
                     <div className="text-2xl font-bold text-[#D4AF37] font-mono">
                       {isConnected && bgBalance ? parseFloat(bgBalance.formatted).toFixed(4) : '0.0000'}
                     </div>
@@ -2444,6 +2505,8 @@ export default function MinerGame() {
                 </div>
               </div>
             </div>
+
+            <div className="text-xs text-gray-500 mb-2 text-center">Swap ETH → BG on DEXs:</div>
 
             <div className="space-y-2">
               <a href="https://aerodrome.finance/swap?from=eth&to=0x36b712A629095234F2196BbB000D1b96C12Ce78e" target="_blank" rel="noopener noreferrer" className="block p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl hover:bg-blue-500/20">
