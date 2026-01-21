@@ -271,152 +271,6 @@ function generateChallengePosition(): { x: number; y: number } {
   };
 }
 
-// ============ BUY ETH BUTTON COMPONENT ============
-
-interface BuyEthButtonProps {
-  address: string | undefined;
-  className?: string;
-  fullWidth?: boolean;
-}
-
-function BuyEthButton({ address, className, fullWidth }: BuyEthButtonProps) {
-  const [loading, setLoading] = useState(false);
-  const [redirecting, setRedirecting] = useState(false);
-  
-  // Helper to open URL, with Farcaster SDK support
-  const openExternalUrl = async (url: string) => {
-    try {
-      // Try Farcaster SDK first (works best in Frame context)
-      if (typeof sdk !== 'undefined' && sdk.actions?.openUrl) {
-        await sdk.actions.openUrl(url);
-        return true;
-      }
-    } catch (e) {
-      console.log('Farcaster SDK openUrl not available, using fallback');
-    }
-    return false;
-  };
-  
-  const handleBuyEth = async () => {
-    if (!address) return;
-    setLoading(true);
-    
-    // iOS FIX: Open window IMMEDIATELY on user gesture, before any async work
-    // This prevents iOS Safari from blocking the popup
-    const fallbackUrl = `https://pay.coinbase.com/buy/select-asset?addresses=${encodeURIComponent(JSON.stringify({[address]: ["base"]}))}&assets=${encodeURIComponent(JSON.stringify(["ETH"]))}`;
-    
-    // Detect platform
-    const isInAppBrowser = /FBAN|FBAV|Instagram|Telegram|Twitter|wv|WebView/i.test(navigator.userAgent);
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const isFarcaster = /Farcaster|Warpcast/i.test(navigator.userAgent) || window.location.href.includes('warpcast');
-    
-    // For Farcaster, try using SDK first
-    if (isFarcaster) {
-      setLoading(true);
-      try {
-        const res = await fetch('/api/onramp', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ address }),
-        });
-        const data = await res.json();
-        const targetUrl = data.url || (data.token ? `https://pay.coinbase.com/buy?sessionToken=${data.token}` : fallbackUrl);
-        
-        const sdkOpened = await openExternalUrl(targetUrl);
-        if (!sdkOpened) {
-          window.open(targetUrl, '_blank');
-        }
-      } catch (err) {
-        const sdkOpened = await openExternalUrl(fallbackUrl);
-        if (!sdkOpened) {
-          window.open(fallbackUrl, '_blank');
-        }
-      } finally {
-        setLoading(false);
-      }
-      return;
-    }
-    
-    // For in-app browsers, navigate in same window to avoid popup issues
-    if (isInAppBrowser) {
-      setRedirecting(true);
-      // Small delay to show feedback before navigating away
-      setTimeout(() => {
-        window.location.href = fallbackUrl;
-      }, 300);
-      return;
-    }
-    
-    // For iOS Safari: Open window immediately, then update URL after API call
-    let newWindow: Window | null = null;
-    if (isIOS) {
-      newWindow = window.open('about:blank', '_blank');
-      if (newWindow) {
-        newWindow.document.write(`
-          <html>
-            <head><title>Loading Coinbase...</title></head>
-            <body style="background:#000;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
-              <div style="text-align:center;">
-                <div style="font-size:48px;margin-bottom:16px;">💰</div>
-                <div>Loading Coinbase Pay...</div>
-              </div>
-            </body>
-          </html>
-        `);
-      }
-    }
-    
-    try {
-      const res = await fetch('/api/onramp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address }),
-      });
-      const data = await res.json();
-      
-      const targetUrl = data.url || (data.token ? `https://pay.coinbase.com/buy?sessionToken=${data.token}` : fallbackUrl);
-      
-      if (isIOS && newWindow) {
-        // Update the already-opened window
-        newWindow.location.href = targetUrl;
-      } else {
-        // Desktop: open normally
-        window.open(targetUrl, '_blank');
-      }
-    } catch (err) {
-      // Use fallback URL
-      if (isIOS && newWindow) {
-        newWindow.location.href = fallbackUrl;
-      } else {
-        window.open(fallbackUrl, '_blank');
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-  
-  return (
-    <button
-      onClick={handleBuyEth}
-      disabled={!address || loading || redirecting}
-      className={className || `h-9 px-4 bg-[#0052FF] text-white font-semibold text-xs rounded-lg hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5 ${fullWidth ? 'w-full' : ''}`}
-    >
-      {redirecting ? (
-        <span className="animate-pulse">Opening Coinbase...</span>
-      ) : loading ? (
-        <span className="animate-pulse">Loading...</span>
-      ) : (
-        <>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 22C6.486 22 2 17.514 2 12S6.486 2 12 2s10 4.486 10 10-4.486 10-10 10zm1-15h-2v4H7v2h4v4h2v-4h4v-2h-4V7z"/>
-          </svg>
-          <span>Buy ETH</span>
-        </>
-      )}
-    </button>
-  );
-}
-
 // ============ ABIs ============
 
 const ERC20_ABI = [
@@ -2569,10 +2423,13 @@ export default function MinerGame() {
             </div>
           </div>
           <div className="flex gap-2">
-            <BuyEthButton 
-              address={address}
+            <button
+              onClick={() => appKit.open()}
               className="h-9 px-4 bg-[#0052FF] text-white font-semibold text-xs rounded-lg hover:bg-[#0040CC] transition-all flex items-center gap-1.5"
-            />
+            >
+              <span>⊕</span>
+              <span>Buy ETH</span>
+            </button>
             <a 
               href="https://relay.link/bridge/base" 
               target="_blank" 
@@ -2902,13 +2759,13 @@ export default function MinerGame() {
                 </div>
                 <div className="text-xs text-gray-400 mb-3">Shop purchases are paid in ETH (which buys & burns BG automatically)</div>
                 <div className="flex gap-2">
-                  <div className="flex-1">
-                    <BuyEthButton 
-                      address={address}
-                      className="w-full py-2 bg-[#0052FF] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"
-                      fullWidth
-                    />
-                  </div>
+                  <button
+                    onClick={() => appKit.open()}
+                    className="flex-1 py-2 bg-[#0052FF] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"
+                  >
+                    <span>⊕</span>
+                    <span>Buy ETH</span>
+                  </button>
                   <a 
                     href="https://relay.link/bridge/base" 
                     target="_blank" 
@@ -3202,88 +3059,129 @@ export default function MinerGame() {
           <>
             <div className="text-center mb-4">
               <h2 className="text-xl font-bold text-[#D4AF37] mb-1">🛒 Get Tokens</h2>
+              <p className="text-xs text-gray-500">Buy ETH with card, then swap for BG</p>
             </div>
 
-            {/* Need ETH for Shop */}
-            <div className="mb-4 p-4 bg-[#627EEA]/10 border border-[#627EEA]/30 rounded-xl">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-full bg-[#627EEA]/20 flex items-center justify-center text-lg">Ξ</div>
-                <div>
-                  <div className="font-medium text-white">Need ETH for Shop?</div>
-                  <div className="text-xs text-gray-400">Shop purchases require ETH (not BG)</div>
+            {/* Step 1: Buy ETH */}
+            <div className="mb-4 p-4 bg-[#0052FF]/10 border border-[#0052FF]/30 rounded-xl">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-6 h-6 rounded-full bg-[#0052FF] flex items-center justify-center text-white text-xs font-bold">1</div>
+                <div className="text-sm font-medium text-white">Buy ETH with Card</div>
+              </div>
+              <button
+                onClick={() => appKit.open()}
+                className="w-full p-4 bg-[#0052FF] hover:bg-[#0040CC] rounded-xl transition-all flex items-center justify-center gap-3 group"
+              >
+                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
+                  💳
+                </div>
+                <div className="text-left">
+                  <div className="text-white font-bold">Buy ETH</div>
+                  <div className="text-white/70 text-xs">Open wallet → Buy tab</div>
+                </div>
+              </button>
+            </div>
+
+            {/* Step 2: Swap to BG */}
+            <div className="mb-4 p-4 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-6 h-6 rounded-full bg-[#D4AF37] flex items-center justify-center text-black text-xs font-bold">2</div>
+                <div className="text-sm font-medium text-white">Swap ETH → BG</div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <a 
+                  href="https://aerodrome.finance/swap?from=eth&to=0x36b712A629095234F2196BbB000D1b96C12Ce78e" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="p-3 bg-blue-500/20 border border-blue-500/40 rounded-lg hover:bg-blue-500/30 transition-all text-center group"
+                >
+                  <div className="text-xl mb-1 group-hover:scale-110 transition-transform">🔵</div>
+                  <div className="text-blue-400 font-bold text-sm">Aerodrome</div>
+                  <div className="text-xs text-gray-500">Best liquidity</div>
+                </a>
+                <a 
+                  href="https://app.uniswap.org/swap?outputCurrency=0x36b712A629095234F2196BbB000D1b96C12Ce78e&chain=base" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="p-3 bg-pink-500/20 border border-pink-500/40 rounded-lg hover:bg-pink-500/30 transition-all text-center group"
+                >
+                  <div className="text-xl mb-1 group-hover:scale-110 transition-transform">🦄</div>
+                  <div className="text-pink-400 font-bold text-sm">Uniswap</div>
+                  <div className="text-xs text-gray-500">Popular DEX</div>
+                </a>
+              </div>
+            </div>
+
+            {/* Current Balances */}
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              {/* ETH Balance */}
+              <div className="p-3 bg-[#627EEA]/10 border border-[#627EEA]/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="w-6 h-6 rounded-full bg-[#627EEA] flex items-center justify-center text-white text-xs font-bold">Ξ</div>
+                  <div className="text-xs text-gray-400">ETH</div>
+                </div>
+                <div className="text-lg font-bold text-white font-mono">
+                  {isConnected && ethBalance ? parseFloat(ethBalance.formatted).toFixed(4) : '0.0000'}
                 </div>
               </div>
-              <div className="flex gap-2">
-                <div className="flex-1">
-                  <BuyEthButton 
-                    address={address}
-                    className="w-full py-2.5 bg-[#0052FF] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"
-                    fullWidth
-                  />
+
+              {/* BG Balance */}
+              <div className="p-3 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-xl">
+                <div className="flex items-center gap-2 mb-1">
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#D4AF37] to-[#996515] flex items-center justify-center text-[8px] font-bold text-black">BG</div>
+                  <div className="text-xs text-gray-400">BaseGold</div>
+                </div>
+                <div className="text-lg font-bold text-[#D4AF37] font-mono">
+                  {isConnected && bgBalance ? parseFloat(bgBalance.formatted).toFixed(4) : '0.0000'}
+                </div>
+              </div>
+            </div>
+
+            {/* Bridge Option */}
+            <div className="mb-4 p-3 bg-white/5 border border-white/10 rounded-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-white">🌉 Bridge from other chains</div>
+                  <div className="text-xs text-gray-500">Move ETH from Ethereum, Arbitrum, etc.</div>
                 </div>
                 <a 
                   href="https://relay.link/bridge/base" 
                   target="_blank" 
                   rel="noopener noreferrer" 
-                  className="py-2.5 px-4 bg-white/10 border border-white/20 text-gray-300 font-semibold text-sm rounded-lg hover:bg-white/20 transition-all"
+                  className="px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg text-sm text-white transition-all"
                 >
-                  🌉 Bridge
+                  Bridge →
                 </a>
               </div>
             </div>
 
-            {/* BG Balance */}
-            <div className="mb-4 p-4 bg-gradient-to-br from-[#D4AF37]/20 to-[#996515]/20 border border-[#D4AF37]/30 rounded-xl">
+            {/* Contract Info */}
+            <div className="p-3 bg-white/5 rounded-lg">
+              <div className="text-xs text-gray-500 mb-1">BG Token Contract:</div>
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] flex items-center justify-center text-[#996515] font-bold border-2 border-[#996515]">BG</div>
-                  <div>
-                    <div className="text-xs text-gray-400">Your BG Balance</div>
-                    <div className="text-2xl font-bold text-[#D4AF37] font-mono">
-                      {isConnected && bgBalance ? parseFloat(bgBalance.formatted).toFixed(4) : '0.0000'}
-                    </div>
-                  </div>
-                </div>
+                <code className="text-xs text-[#D4AF37] font-mono">0x36b712A629095234F2196BbB000D1b96C12Ce78e</code>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText('0x36b712A629095234F2196BbB000D1b96C12Ce78e');
+                  }}
+                  className="px-2 py-1 bg-white/10 hover:bg-white/20 rounded text-xs text-gray-400 hover:text-white transition-all"
+                >
+                  Copy
+                </button>
               </div>
             </div>
 
-            <div className="text-xs text-gray-500 mb-2 text-center">Swap ETH → BG on DEXs:</div>
-
-            <div className="space-y-2">
-              <a href="https://aerodrome.finance/swap?from=eth&to=0x36b712A629095234F2196BbB000D1b96C12Ce78e" target="_blank" rel="noopener noreferrer" className="block p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl hover:bg-blue-500/20">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-blue-500/20 flex items-center justify-center text-xl">🔵</div>
-                    <div>
-                      <div className="font-medium text-white">Aerodrome</div>
-                      <div className="text-xs text-gray-400">Best liquidity</div>
-                    </div>
-                  </div>
-                  <div className="text-blue-400 text-sm">Swap →</div>
-                </div>
-              </a>
-
-              <a href="https://app.uniswap.org/swap?outputCurrency=0x36b712A629095234F2196BbB000D1b96C12Ce78e&chain=base" target="_blank" rel="noopener noreferrer" className="block p-4 bg-pink-500/10 border border-pink-500/30 rounded-xl hover:bg-pink-500/20">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-pink-500/20 flex items-center justify-center text-xl">🦄</div>
-                    <div>
-                      <div className="font-medium text-white">Uniswap</div>
-                      <div className="text-xs text-gray-400">Popular DEX</div>
-                    </div>
-                  </div>
-                  <div className="text-pink-400 text-sm">Swap →</div>
-                </div>
-              </a>
-            </div>
-
-            <div className="mt-4 p-3 bg-white/5 rounded-lg">
-              <div className="text-xs text-gray-400 mb-1">Contract:</div>
-              <div className="flex items-center gap-2">
-                <code className="text-xs text-[#D4AF37] font-mono flex-1 truncate">0x36b712A629095234F2196BbB000D1b96C12Ce78e</code>
-                <button onClick={() => { navigator.clipboard.writeText('0x36b712A629095234F2196BbB000D1b96C12Ce78e'); }} className="px-2 py-1 bg-white/10 rounded text-xs">Copy</button>
+            {!isConnected && (
+              <div className="mt-4 text-center">
+                <p className="text-gray-400 text-sm mb-2">Connect wallet to get started</p>
+                <button
+                  onClick={() => appKit.open()}
+                  className="px-6 py-3 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold rounded-lg hover:shadow-lg hover:shadow-[#D4AF37]/20 transition-all"
+                >
+                  🔗 Connect Wallet
+                </button>
               </div>
-            </div>
+            )}
           </>
         )}
 
