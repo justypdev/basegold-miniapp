@@ -271,6 +271,31 @@ function generateChallengePosition(): { x: number; y: number } {
   };
 }
 
+// ============ BUY ETH BUTTON - Direct to Base via Coinbase Pay ============
+
+function BuyEthButton({ address, className }: { address?: string; className?: string }) {
+  const handleBuyEth = () => {
+    if (!address) return;
+    
+    // Direct Coinbase Pay URL - goes straight to Base ETH
+    const coinbasePayUrl = `https://pay.coinbase.com/buy/select-asset?addresses=${encodeURIComponent(JSON.stringify({[address]: ["base"]}))}&assets=${encodeURIComponent(JSON.stringify(["ETH"]))}`;
+    
+    // Open in new tab
+    window.open(coinbasePayUrl, '_blank');
+  };
+  
+  return (
+    <button
+      onClick={handleBuyEth}
+      disabled={!address}
+      className={className || "h-9 px-4 bg-[#0052FF] text-white font-semibold text-xs rounded-lg hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"}
+    >
+      <span>⊕</span>
+      <span>Buy ETH</span>
+    </button>
+  );
+}
+
 // ============ ABIs ============
 
 const ERC20_ABI = [
@@ -2423,13 +2448,10 @@ export default function MinerGame() {
             </div>
           </div>
           <div className="flex gap-2">
-            <button
-              onClick={() => appKit.open()}
+            <BuyEthButton 
+              address={address}
               className="h-9 px-4 bg-[#0052FF] text-white font-semibold text-xs rounded-lg hover:bg-[#0040CC] transition-all flex items-center gap-1.5"
-            >
-              <span>⊕</span>
-              <span>Buy ETH</span>
-            </button>
+            />
             <a 
               href="https://relay.link/bridge/base" 
               target="_blank" 
@@ -2759,13 +2781,10 @@ export default function MinerGame() {
                 </div>
                 <div className="text-xs text-gray-400 mb-3">Shop purchases are paid in ETH (which buys & burns BG automatically)</div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => appKit.open()}
+                  <BuyEthButton 
+                    address={address}
                     className="flex-1 py-2 bg-[#0052FF] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"
-                  >
-                    <span>⊕</span>
-                    <span>Buy ETH</span>
-                  </button>
+                  />
                   <a 
                     href="https://relay.link/bridge/base" 
                     target="_blank" 
@@ -3066,20 +3085,13 @@ export default function MinerGame() {
             <div className="mb-4 p-4 bg-[#0052FF]/10 border border-[#0052FF]/30 rounded-xl">
               <div className="flex items-center gap-2 mb-3">
                 <div className="w-6 h-6 rounded-full bg-[#0052FF] flex items-center justify-center text-white text-xs font-bold">1</div>
-                <div className="text-sm font-medium text-white">Buy ETH with Card</div>
+                <div className="text-sm font-medium text-white">Buy ETH on Base</div>
               </div>
-              <button
-                onClick={() => appKit.open()}
-                className="w-full p-4 bg-[#0052FF] hover:bg-[#0040CC] rounded-xl transition-all flex items-center justify-center gap-3 group"
-              >
-                <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
-                  💳
-                </div>
-                <div className="text-left">
-                  <div className="text-white font-bold">Buy ETH</div>
-                  <div className="text-white/70 text-xs">Open wallet → Buy tab</div>
-                </div>
-              </button>
+              <BuyEthButton 
+                address={address}
+                className="w-full p-4 bg-[#0052FF] hover:bg-[#0040CC] rounded-xl transition-all flex items-center justify-center gap-3"
+              />
+              <p className="text-xs text-gray-500 text-center mt-2">Opens Coinbase Pay → Base ETH</p>
             </div>
 
             {/* Step 2: Swap to BG */}
