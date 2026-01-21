@@ -14,9 +14,61 @@ const redis = new Redis({
 
 const INSTANT_BURN = '0xF9dc5A103C5B09bfe71cF1Badcce362827b34BFE' as `0x${string}`;
 const MIN_BURNS_FOR_LEADERBOARD = 1;
-const LEADERBOARD_KEY = 'leaderboard:points';
+const LEADERBOARD_KEY = 'leaderboard:points:s2'; // Season 2 leaderboard
 const MAX_LEADERBOARD_SIZE = 100;
 const SESSION_TIMEOUT = 60000;
+
+// ============ ANTI-CHEAT VALIDATION ============
+
+// Maximum theoretical gold per second at max upgrades + all shop items
+// This helps detect obviously tampered scores
+const MAX_GOLD_PER_SECOND_THEORETICAL = 50000; // Very generous cap
+const MAX_GOLD_PER_CLICK_THEORETICAL = 10000;
+const MAX_CLICKS_PER_SECOND = 20;
+
+function validateGoldPlausibility(
+  gold: number, 
+  totalClicks: number, 
+  sessionDurationMinutes: number,
+  burnCount: number
+): { valid: boolean; reason?: string; suspicionScore: number } {
+  let suspicionScore = 0;
+  
+  // Calculate maximum possible gold
+  const maxClickGold = totalClicks * MAX_GOLD_PER_CLICK_THEORETICAL;
+  const maxPassiveGold = sessionDurationMinutes * 60 * MAX_GOLD_PER_SECOND_THEORETICAL;
+  const maxPossibleGold = maxClickGold + maxPassiveGold;
+  
+  // If gold exceeds theoretical maximum, it's definitely tampered
+  if (gold > maxPossibleGold * 1.5) {
+    return { 
+      valid: false, 
+      reason: 'Gold exceeds theoretical maximum',
+      suspicionScore: 100
+    };
+  }
+  
+  // Check clicks per minute rate
+  const clicksPerMinute = totalClicks / Math.max(sessionDurationMinutes, 1);
+  if (clicksPerMinute > MAX_CLICKS_PER_SECOND * 60) {
+    suspicionScore += 30;
+  }
+  
+  // Check gold to click ratio (unreasonably high = suspicious)
+  const goldPerClick = gold / Math.max(totalClicks, 1);
+  if (goldPerClick > MAX_GOLD_PER_CLICK_THEORETICAL * 2) {
+    suspicionScore += 20;
+  }
+  
+  // Players with more burns are more trusted
+  if (burnCount >= 5) suspicionScore -= 10;
+  if (burnCount >= 10) suspicionScore -= 10;
+  
+  return { 
+    valid: true, 
+    suspicionScore: Math.max(0, suspicionScore)
+  };
+}
 
 // ============ TYPES ============
 
@@ -38,6 +90,9 @@ interface LeaderboardEntry {
   totalBurned: number;
   timestamp: number;
   verified: boolean;
+  // Anti-cheat fields
+  suspicionScore?: number;
+  sessionDuration?: number;
 }
 
 interface SubmitRequest {
@@ -49,6 +104,9 @@ interface SubmitRequest {
   totalClicks: number;
   timestamp: number;
   sessionId: string;
+  // Anti-cheat metadata
+  sessionDuration?: number; // minutes
+  antiCheatFlags?: number;
 }
 
 // ============ VIEM CLIENT WITH FALLBACK ============
@@ -203,8 +261,32 @@ export async function POST(request: NextRequest) {
 
     const savedGame = await redis.get<any>(`game:${normalizedAddress}`);
     
-    if (savedGame && Math.abs(savedGame.gold - gold) / Math.max(savedGame.gold, 1) > 0.2) {
-      console.warn(`Gold mismatch for ${normalizedAddress}: submitted ${gold}, saved ${savedGame.gold}`);
+    // Use saved game data if available (more trusted than client-submitted)
+    const finalGold = savedGame ? savedGame.gold : gold;
+    const finalClicks = savedGame ? savedGame.totalClicks : totalClicks;
+    
+    // Get session duration from saved game or estimate
+    const sessionDuration = savedGame?.sessionDuration || body.sessionDuration || 60;
+    
+    // ============ ANTI-CHEAT VALIDATION ============
+    const antiCheatResult = validateGoldPlausibility(
+      finalGold,
+      finalClicks,
+      sessionDuration,
+      onChainData.burnCount
+    );
+    
+    if (!antiCheatResult.valid) {
+      console.warn(`Anti-cheat rejection for ${normalizedAddress}: ${antiCheatResult.reason}`);
+      return NextResponse.json({ 
+        error: 'Score validation failed', 
+        reason: antiCheatResult.reason 
+      }, { status: 400 });
+    }
+    
+    // Log suspicious but valid scores
+    if (antiCheatResult.suspicionScore > 30) {
+      console.warn(`Suspicious score for ${normalizedAddress}: suspicion=${antiCheatResult.suspicionScore}, gold=${finalGold}`);
     }
 
     let leaderboard = await redis.get<LeaderboardEntry[]>(LEADERBOARD_KEY) || [];
@@ -212,12 +294,14 @@ export async function POST(request: NextRequest) {
     const newEntry: LeaderboardEntry = {
       address: normalizedAddress,
       name: sanitizedName,
-      gold: savedGame ? savedGame.gold : gold,
-      totalClicks: savedGame ? savedGame.totalClicks : totalClicks,
+      gold: finalGold,
+      totalClicks: finalClicks,
       burnCount: onChainData.burnCount,
       totalBurned: onChainData.totalBurned,
       timestamp: Date.now(),
       verified: true,
+      suspicionScore: antiCheatResult.suspicionScore,
+      sessionDuration: sessionDuration,
     };
 
     const existingIndex = leaderboard.findIndex(e => e.address.toLowerCase() === normalizedAddress);

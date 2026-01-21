@@ -8,6 +8,8 @@ const redis = new Redis({
 
 const MAX_OFFLINE_HOURS = 8;
 const SESSION_TIMEOUT = 60000;
+const MIN_SAVE_INTERVAL = 5000; // Minimum 5 seconds between saves
+const MAX_GOLD_INCREASE_PER_SECOND = 100000; // Sanity check for gold increase
 
 interface Session {
   sessionId: string;
@@ -22,6 +24,7 @@ interface GameState {
   appliedInstantGold: string[];
   lastSaved: number;
   goldPerSecond: number;
+  sessionDuration?: number; // Track session duration for anti-cheat
 }
 
 // ============ GET - Load Game State ============
@@ -90,10 +93,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Session invalid', kicked: true }, { status: 401 });
     }
 
+    // ============ ANTI-TAMPERING VALIDATION ============
+    
+    // Get previous save to compare
+    const previousSave = await redis.get<GameState>(`game:${normalizedAddress}`);
+    const now = Date.now();
+    
+    if (previousSave) {
+      const timeSinceLastSave = now - previousSave.lastSaved;
+      
+      // Rate limit: Don't allow saves faster than MIN_SAVE_INTERVAL
+      if (timeSinceLastSave < MIN_SAVE_INTERVAL) {
+        return NextResponse.json({ error: 'Saving too fast', rateLimited: true }, { status: 429 });
+      }
+      
+      // Sanity check: Gold shouldn't increase faster than theoretically possible
+      const goldIncrease = (gameState.gold || 0) - (previousSave.gold || 0);
+      const secondsElapsed = Math.max(timeSinceLastSave / 1000, 1);
+      const goldPerSecondRate = goldIncrease / secondsElapsed;
+      
+      if (goldIncrease > 0 && goldPerSecondRate > MAX_GOLD_INCREASE_PER_SECOND) {
+        console.warn(`Suspicious gold increase for ${normalizedAddress}: ${goldPerSecondRate}/sec`);
+        // Don't reject, but cap the gold increase
+        gameState.gold = previousSave.gold + Math.floor(MAX_GOLD_INCREASE_PER_SECOND * secondsElapsed);
+      }
+      
+      // Track session duration
+      gameState.sessionDuration = (previousSave.sessionDuration || 0) + Math.floor(timeSinceLastSave / 60000);
+    }
+
     // Save game state
     await redis.set(`game:${normalizedAddress}`, {
       ...gameState,
-      lastSaved: Date.now(),
+      lastSaved: now,
     });
 
     return NextResponse.json({ success: true });

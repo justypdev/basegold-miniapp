@@ -2,15 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { sdk } from '@farcaster/frame-sdk';
-import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage, useConnect, useDisconnect } from 'wagmi';
-import { 
-  Transaction, 
-  TransactionButton, 
-  TransactionStatus,
-  TransactionStatusLabel,
-  TransactionStatusAction 
-} from '@coinbase/onchainkit/transaction';
-import { FundButton } from '@coinbase/onchainkit/fund';
+import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage, useConnect, useDisconnect, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
 
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
@@ -193,6 +185,237 @@ const MIN_BURNS_FOR_LEADERBOARD = 1;
 const VERIFICATION_POLL_INTERVAL = 2000; // Poll every 2 seconds
 const VERIFICATION_MAX_ATTEMPTS = 30; // Max 60 seconds of polling
 
+// ============ ANTI-CHEAT SECURITY SYSTEM ============
+
+const ANTI_CHEAT = {
+  // Timing analysis
+  MIN_CLICK_INTERVAL: 30, // Minimum ms between clicks (33 CPS max physically impossible)
+  VARIANCE_THRESHOLD: 0.15, // Bots have <15% timing variance, humans have >25%
+  PATTERN_WINDOW: 50, // Analyze last 50 clicks for patterns
+  
+  // Position analysis
+  POSITION_VARIANCE_MIN: 5, // Minimum pixel variance in click positions
+  
+  // Mouse movement analysis
+  MOUSE_MOVEMENT_REQUIRED: 10, // Minimum mouse movements per 50 clicks
+  
+  // Penalties - SOFTENED: Max 10% penalty, no bans
+  BOT_PENALTY_MULTIPLIER: 0.1, // Suspected bots earn 10% gold (90% penalty)
+  UNFOCUSED_PENALTY: 0.75, // Earn 75% when tab not focused (gentler)
+  
+  // Detection thresholds - SOFTENED
+  SUSPICION_THRESHOLD: 5, // Flags needed to be marked suspicious (was 3)
+  MAX_PENALTY_THRESHOLD: 15, // Flags needed for max penalty (was ban at 10)
+  
+  // Challenge system
+  CHALLENGE_INTERVAL: 750, // Show challenge every N clicks at high speed (was 500)
+  HIGH_SPEED_THRESHOLD: 18, // CPS threshold to trigger challenges (was 15)
+};
+
+interface AntiCheatState {
+  clickIntervals: number[];
+  clickPositions: Array<{x: number, y: number}>;
+  mouseMovements: number;
+  suspicionFlags: number;
+  isTabFocused: boolean;
+  lastAnalysis: number;
+  isSuspicious: boolean;
+  penaltyMultiplier: number;
+  honeypotTriggered: boolean;
+  clicksSinceChallenge: number;
+  lastChallengeTime: number;
+  challengesPassed: number;
+  challengesFailed: number;
+}
+
+function analyzeClickPattern(intervals: number[]): { variance: number; isBotLike: boolean } {
+  if (intervals.length < 10) return { variance: 1, isBotLike: false };
+  
+  const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const squaredDiffs = intervals.map(x => Math.pow(x - mean, 2));
+  const variance = Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / intervals.length) / mean;
+  
+  // Bots have very consistent timing (low variance)
+  // Humans naturally have 25-50% variance
+  const isBotLike = variance < ANTI_CHEAT.VARIANCE_THRESHOLD;
+  
+  return { variance, isBotLike };
+}
+
+function analyzeClickPositions(positions: Array<{x: number, y: number}>): boolean {
+  if (positions.length < 10) return false;
+  
+  // Calculate position variance
+  const xValues = positions.map(p => p.x);
+  const yValues = positions.map(p => p.y);
+  
+  const xMean = xValues.reduce((a, b) => a + b, 0) / xValues.length;
+  const yMean = yValues.reduce((a, b) => a + b, 0) / yValues.length;
+  
+  const xVariance = Math.sqrt(xValues.map(x => Math.pow(x - xMean, 2)).reduce((a, b) => a + b, 0) / xValues.length);
+  const yVariance = Math.sqrt(yValues.map(y => Math.pow(y - yMean, 2)).reduce((a, b) => a + b, 0) / yValues.length);
+  
+  // Bots click the exact same position, humans have natural variance
+  return xVariance < ANTI_CHEAT.POSITION_VARIANCE_MIN && yVariance < ANTI_CHEAT.POSITION_VARIANCE_MIN;
+}
+
+// Generate a random challenge position
+function generateChallengePosition(): { x: number; y: number } {
+  // Random position within a 100px radius
+  const angle = Math.random() * 2 * Math.PI;
+  const radius = 20 + Math.random() * 60;
+  return {
+    x: Math.cos(angle) * radius,
+    y: Math.sin(angle) * radius
+  };
+}
+
+// ============ BUY ETH BUTTON COMPONENT ============
+
+interface BuyEthButtonProps {
+  address: string | undefined;
+  className?: string;
+  fullWidth?: boolean;
+}
+
+function BuyEthButton({ address, className, fullWidth }: BuyEthButtonProps) {
+  const [loading, setLoading] = useState(false);
+  const [redirecting, setRedirecting] = useState(false);
+  
+  // Helper to open URL, with Farcaster SDK support
+  const openExternalUrl = async (url: string) => {
+    try {
+      // Try Farcaster SDK first (works best in Frame context)
+      if (typeof sdk !== 'undefined' && sdk.actions?.openUrl) {
+        await sdk.actions.openUrl(url);
+        return true;
+      }
+    } catch (e) {
+      console.log('Farcaster SDK openUrl not available, using fallback');
+    }
+    return false;
+  };
+  
+  const handleBuyEth = async () => {
+    if (!address) return;
+    setLoading(true);
+    
+    // iOS FIX: Open window IMMEDIATELY on user gesture, before any async work
+    // This prevents iOS Safari from blocking the popup
+    const fallbackUrl = `https://pay.coinbase.com/buy/select-asset?addresses=${encodeURIComponent(JSON.stringify({[address]: ["base"]}))}&assets=${encodeURIComponent(JSON.stringify(["ETH"]))}`;
+    
+    // Detect platform
+    const isInAppBrowser = /FBAN|FBAV|Instagram|Telegram|Twitter|wv|WebView/i.test(navigator.userAgent);
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const isFarcaster = /Farcaster|Warpcast/i.test(navigator.userAgent) || window.location.href.includes('warpcast');
+    
+    // For Farcaster, try using SDK first
+    if (isFarcaster) {
+      setLoading(true);
+      try {
+        const res = await fetch('/api/onramp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address }),
+        });
+        const data = await res.json();
+        const targetUrl = data.url || (data.token ? `https://pay.coinbase.com/buy?sessionToken=${data.token}` : fallbackUrl);
+        
+        const sdkOpened = await openExternalUrl(targetUrl);
+        if (!sdkOpened) {
+          window.open(targetUrl, '_blank');
+        }
+      } catch (err) {
+        const sdkOpened = await openExternalUrl(fallbackUrl);
+        if (!sdkOpened) {
+          window.open(fallbackUrl, '_blank');
+        }
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+    
+    // For in-app browsers, navigate in same window to avoid popup issues
+    if (isInAppBrowser) {
+      setRedirecting(true);
+      // Small delay to show feedback before navigating away
+      setTimeout(() => {
+        window.location.href = fallbackUrl;
+      }, 300);
+      return;
+    }
+    
+    // For iOS Safari: Open window immediately, then update URL after API call
+    let newWindow: Window | null = null;
+    if (isIOS) {
+      newWindow = window.open('about:blank', '_blank');
+      if (newWindow) {
+        newWindow.document.write(`
+          <html>
+            <head><title>Loading Coinbase...</title></head>
+            <body style="background:#000;color:#fff;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;">
+              <div style="text-align:center;">
+                <div style="font-size:48px;margin-bottom:16px;">💰</div>
+                <div>Loading Coinbase Pay...</div>
+              </div>
+            </body>
+          </html>
+        `);
+      }
+    }
+    
+    try {
+      const res = await fetch('/api/onramp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      });
+      const data = await res.json();
+      
+      const targetUrl = data.url || (data.token ? `https://pay.coinbase.com/buy?sessionToken=${data.token}` : fallbackUrl);
+      
+      if (isIOS && newWindow) {
+        // Update the already-opened window
+        newWindow.location.href = targetUrl;
+      } else {
+        // Desktop: open normally
+        window.open(targetUrl, '_blank');
+      }
+    } catch (err) {
+      // Use fallback URL
+      if (isIOS && newWindow) {
+        newWindow.location.href = fallbackUrl;
+      } else {
+        window.open(fallbackUrl, '_blank');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  return (
+    <button
+      onClick={handleBuyEth}
+      disabled={!address || loading || redirecting}
+      className={className || `h-9 px-4 bg-[#0052FF] text-white font-semibold text-xs rounded-lg hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5 ${fullWidth ? 'w-full' : ''}`}
+    >
+      {redirecting ? (
+        <span className="animate-pulse">Opening Coinbase...</span>
+      ) : loading ? (
+        <span className="animate-pulse">Loading...</span>
+      ) : (
+        <>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm0 22C6.486 22 2 17.514 2 12S6.486 2 12 2s10 4.486 10 10-4.486 10-10 10zm1-15h-2v4H7v2h4v4h2v-4h4v-2h-4V7z"/>
+          </svg>
+          <span>Buy ETH</span>
+        </>
+      )}
+    </button>
+  );
+}
+
 // ============ ABIs ============
 
 const ERC20_ABI = [
@@ -248,6 +471,7 @@ const INSTANT_BURN_ABI = [
 // Effects are ONLY applied after on-chain verification
 
 const SHOP_ITEMS = [
+  // ============ SEASON 1 ITEMS ============
   {
     id: 'boost_2x',
     name: '⚡ 2x Power Boost',
@@ -255,7 +479,8 @@ const SHOP_ITEMS = [
     priceETH: '0.00015',
     priceUSD: '~$0.50',
     emoji: '⚡',
-    effect: { type: 'boost' as const, multiplier: 2, duration: 600000 }
+    effect: { type: 'boost' as const, multiplier: 2, duration: 600000 },
+    season: 1
   },
   {
     id: 'time_warp',
@@ -264,7 +489,8 @@ const SHOP_ITEMS = [
     priceETH: '0.0003',
     priceUSD: '~$1.00',
     emoji: '⏰',
-    effect: { type: 'instant_gold' as const, hours: 1 }
+    effect: { type: 'instant_gold' as const, hours: 1 },
+    season: 1
   },
   {
     id: 'diamond_pickaxe',
@@ -273,7 +499,8 @@ const SHOP_ITEMS = [
     priceETH: '0.0006',
     priceUSD: '~$2.00',
     emoji: '💎',
-    effect: { type: 'permanent_click' as const, amount: 10 }
+    effect: { type: 'permanent_click' as const, amount: 10 },
+    season: 1
   },
   {
     id: 'auto_miner',
@@ -282,7 +509,8 @@ const SHOP_ITEMS = [
     priceETH: '0.0015',
     priceUSD: '~$5.00',
     emoji: '🤖',
-    effect: { type: 'permanent_passive' as const, amount: 100 }
+    effect: { type: 'permanent_passive' as const, amount: 100 },
+    season: 1
   },
   {
     id: 'golden_crown',
@@ -291,16 +519,97 @@ const SHOP_ITEMS = [
     priceETH: '0.001',
     priceUSD: '~$3.00',
     emoji: '👑',
-    effect: { type: 'cosmetic' as const, maxCombo: 15 }
+    effect: { type: 'cosmetic' as const, maxCombo: 15 },
+    season: 1
   },
   {
     id: 'burn_booster',
     name: '🔥 Burn Booster',
     description: '+5/click, +25/sec, 100% burns BG!',
-    priceETH: '0.0003',
-    priceUSD: '~$1.00',
+    priceETH: '0.00035',
+    priceUSD: '~$1.15',
     emoji: '🔥',
-    effect: { type: 'burn_bonus' as const, clickAmount: 5, passiveAmount: 25 }
+    effect: { type: 'burn_bonus' as const, clickAmount: 5, passiveAmount: 25 },
+    season: 1
+  },
+  
+  // ============ 🆕 SEASON 2 EXCLUSIVE ITEMS ============
+  {
+    id: 'mega_boost_5x',
+    name: '⚡ 5x MEGA BOOST',
+    description: '5x ALL earnings for 5 minutes!',
+    priceETH: '0.0012',
+    priceUSD: '~$4.00',
+    emoji: '⚡',
+    effect: { type: 'boost' as const, multiplier: 5, duration: 300000 },
+    season: 2,
+    tag: 'NEW'
+  },
+  {
+    id: 'second_mine',
+    name: '🏔️ Second Mine',
+    description: 'PERMANENT 2x multiplier on ALL earnings!',
+    priceETH: '0.005',
+    priceUSD: '~$15.00',
+    emoji: '🏔️',
+    effect: { type: 'global_multiplier' as const, multiplier: 2 },
+    season: 2,
+    tag: 'LEGENDARY'
+  },
+  {
+    id: 'golden_goat',
+    name: '🐐 Golden Goat',
+    description: 'Premium cosmetic + 25x combo + auto-click!',
+    priceETH: '0.003',
+    priceUSD: '~$10.00',
+    emoji: '🐐',
+    effect: { type: 'golden_goat' as const, maxCombo: 25, autoClick: 2 },
+    season: 2,
+    tag: 'EPIC'
+  },
+  {
+    id: 'lucky_nugget',
+    name: '🍀 Lucky Nugget',
+    description: '15% chance for 10x gold per click!',
+    priceETH: '0.002',
+    priceUSD: '~$6.00',
+    emoji: '🍀',
+    effect: { type: 'lucky' as const, chance: 0.15, multiplier: 10 },
+    season: 2,
+    tag: 'NEW'
+  },
+  {
+    id: 'time_warp_pro',
+    name: '⏰ Time Warp PRO',
+    description: 'Instantly collect 8 HOURS of passive gold!',
+    priceETH: '0.0022',
+    priceUSD: '~$7.00',
+    emoji: '⏰',
+    effect: { type: 'instant_gold' as const, hours: 8 },
+    season: 2,
+    tag: 'NEW'
+  },
+  {
+    id: 'diamond_mine',
+    name: '💎 Diamond Mine',
+    description: 'Permanent +500 gold per second!',
+    priceETH: '0.004',
+    priceUSD: '~$12.00',
+    emoji: '💎',
+    effect: { type: 'permanent_passive' as const, amount: 500 },
+    season: 2,
+    tag: 'EPIC'
+  },
+  {
+    id: 'inferno_burn',
+    name: '🔥 INFERNO BURN',
+    description: '+25/click, +100/sec, MASSIVE BG burn!',
+    priceETH: '0.0017',
+    priceUSD: '~$5.50',
+    emoji: '🔥',
+    effect: { type: 'burn_bonus' as const, clickAmount: 25, passiveAmount: 100 },
+    season: 2,
+    tag: 'NEW'
   },
 ];
 
@@ -368,20 +677,38 @@ interface VerifiedBonuses {
   bonusClick: number;
   bonusPassive: number;
   hasCrown: boolean;
+  hasGoat: boolean;
+  hasLucky: boolean;
+  hasDiamondMine: boolean;
+  hasInferno: boolean;
   maxCombo: number;
   activeBoost: ActiveBoost | null;
   instantGoldPending: number;
   botCount: number;
+  globalMultiplier: number;
+  luckyChance: number;
+  luckyMultiplier: number;
+  autoClickRate: number;
+  mineCount: number;
 }
 
 function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: number): VerifiedBonuses {
   let bonusClick = 0;
   let bonusPassive = 0;
   let hasCrown = false;
+  let hasGoat = false;
+  let hasLucky = false;
+  let hasDiamondMine = false;
+  let hasInferno = false;
   let maxCombo = 10;
   let activeBoost: ActiveBoost | null = null;
   let instantGoldPending = 0;
   let botCount = 0;
+  let globalMultiplier = 1;
+  let luckyChance = 0;
+  let luckyMultiplier = 1;
+  let autoClickRate = 0;
+  let mineCount = 1;
 
   purchases.forEach(purchase => {
     const item = matchEthToItem(purchase.ethAmount);
@@ -393,18 +720,23 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
         break;
       case 'permanent_passive':
         bonusPassive += item.effect.amount || 100;
-        botCount++; // Count Auto-Miner Bots
+        // Check if it's Diamond Mine (500 passive) or regular Auto-Miner (100 passive)
+        if (item.effect.amount === 500) {
+          hasDiamondMine = true;
+        } else {
+          botCount++;
+        }
         break;
       case 'cosmetic':
         hasCrown = true;
-        maxCombo = item.effect.maxCombo || 15;
+        maxCombo = Math.max(maxCombo, item.effect.maxCombo || 15);
         break;
       case 'boost':
         const boostEndTime = purchase.timestamp + (item.effect.duration || 600000);
         const remaining = boostEndTime - currentTime;
         if (remaining > 0) {
-          // Keep the boost with most time remaining
-          if (!activeBoost || remaining > activeBoost.remaining) {
+          // Keep the HIGHEST multiplier boost that's still active
+          if (!activeBoost || item.effect.multiplier > activeBoost.multiplier) {
             activeBoost = { 
               multiplier: item.effect.multiplier || 2, 
               endTime: boostEndTime,
@@ -414,18 +746,39 @@ function calculateVerifiedBonuses(purchases: OnChainPurchase[], currentTime: num
         }
         break;
       case 'instant_gold':
-        // Track for display, actual gold added when verified
         instantGoldPending++;
         break;
       case 'burn_bonus':
-        // Burn Booster: gives both click and passive bonuses
         bonusClick += item.effect.clickAmount || 5;
         bonusPassive += item.effect.passiveAmount || 25;
+        // Check if it's Inferno Burn (25 click, 100 passive) or regular Burn Booster
+        if ((item.effect.clickAmount || 0) >= 25) {
+          hasInferno = true;
+        }
+        break;
+      // ============ SEASON 2 EFFECTS ============
+      case 'global_multiplier':
+        globalMultiplier *= item.effect.multiplier || 2;
+        mineCount++;
+        break;
+      case 'golden_goat':
+        hasGoat = true;
+        maxCombo = Math.max(maxCombo, item.effect.maxCombo || 25);
+        autoClickRate += item.effect.autoClick || 2;
+        break;
+      case 'lucky':
+        hasLucky = true;
+        luckyChance = Math.min(luckyChance + (item.effect.chance || 0.15), 0.5); // Cap at 50%
+        luckyMultiplier = Math.max(luckyMultiplier, item.effect.multiplier || 10);
         break;
     }
   });
 
-  return { bonusClick, bonusPassive, hasCrown, maxCombo, activeBoost, instantGoldPending, botCount };
+  return { 
+    bonusClick, bonusPassive, hasCrown, hasGoat, hasLucky, hasDiamondMine, hasInferno,
+    maxCombo, activeBoost, instantGoldPending, botCount, globalMultiplier, luckyChance, 
+    luckyMultiplier, autoClickRate, mineCount 
+  };
 }
 
 // ============ COMPONENTS ============
@@ -483,10 +836,28 @@ function AmbientGlow() {
 }
 
 // Mine Visualization Component
-function MineVisualization({ upgrades, botCount = 0 }: { upgrades: typeof INITIAL_UPGRADES; botCount?: number }) {
+function MineVisualization({ 
+  upgrades, 
+  botCount = 0, 
+  mineCount = 1, 
+  hasGoat = false,
+  hasLucky = false,
+  hasDiamondMine = false,
+  hasInferno = false,
+  boostMultiplier = 1
+}: { 
+  upgrades: typeof INITIAL_UPGRADES; 
+  botCount?: number; 
+  mineCount?: number; 
+  hasGoat?: boolean;
+  hasLucky?: boolean;
+  hasDiamondMine?: boolean;
+  hasInferno?: boolean;
+  boostMultiplier?: number;
+}) {
   const totalUpgrades = Object.values(upgrades).reduce((sum, u) => sum + u.owned, 0) + botCount;
   
-  if (totalUpgrades === 0) {
+  if (totalUpgrades === 0 && mineCount <= 1 && !hasGoat && !hasLucky && !hasDiamondMine && !hasInferno) {
     return (
       <div className="mt-4 p-4 bg-gradient-to-b from-[#2a1a0a] to-[#1a0f05] rounded-xl border border-[#3d2817]">
         <div className="text-center text-sm text-[#D4AF37] mb-2">⛏️ Your Mine</div>
@@ -501,10 +872,29 @@ function MineVisualization({ upgrades, botCount = 0 }: { upgrades: typeof INITIA
   const levelNames = ['Starter', 'Basic', 'Improved', 'Advanced', 'Professional', 'Industrial', 'Mega', 'Ultimate', 'Legendary', 'Mythical'];
   const levelName = levelNames[Math.min(level - 1, levelNames.length - 1)];
   
+  // Determine mine theme based on Season 2 items
+  const hasS2Items = mineCount > 1 || hasGoat || hasDiamondMine || hasInferno;
+  
   return (
-    <div className="mt-4 p-3 bg-gradient-to-b from-[#2a1a0a] to-[#1a0f05] rounded-xl border border-[#3d2817] overflow-hidden">
-      <div className="text-center text-sm text-[#D4AF37] mb-2">⛏️ {levelName} Mine (Lvl {level})</div>
-      <div className="relative h-32 bg-gradient-to-b from-[#2a1a0a] via-[#1a0f05] to-[#0f0a03] rounded-lg overflow-hidden">
+    <div className={`mt-4 p-3 rounded-xl overflow-hidden ${
+      hasS2Items 
+        ? 'bg-gradient-to-b from-[#1a0a20] to-[#0a0510] border border-purple-500/30' 
+        : 'bg-gradient-to-b from-[#2a1a0a] to-[#1a0f05] border border-[#3d2817]'
+    }`}>
+      <div className="text-center text-sm text-[#D4AF37] mb-2 flex items-center justify-center gap-2 flex-wrap">
+        {mineCount > 1 && <span className="text-purple-400 text-xs bg-purple-500/20 px-2 py-0.5 rounded-full animate-pulse">{mineCount}x MINES</span>}
+        {boostMultiplier > 1 && <span className="text-yellow-400 text-xs bg-yellow-500/20 px-2 py-0.5 rounded-full animate-pulse">⚡{boostMultiplier}x</span>}
+        <span>⛏️ {levelName} Mine (Lvl {level})</span>
+        {hasGoat && <span className="text-yellow-400">🐐</span>}
+        {hasLucky && <span className="text-emerald-400">🍀</span>}
+        {hasDiamondMine && <span className="text-cyan-400">💎</span>}
+        {hasInferno && <span className="text-orange-400">🔥</span>}
+      </div>
+      <div className={`relative h-40 rounded-lg overflow-hidden ${mineCount > 1 ? 'border-2 border-purple-500/30' : ''}`} style={{
+        background: hasS2Items 
+          ? 'linear-gradient(to bottom, #1a0a20, #0f0518, #080210)'
+          : 'linear-gradient(to bottom, #2a1a0a, #1a0f05, #0f0a03)'
+      }}>
         {/* Background grid */}
         <div className="absolute inset-0 opacity-20" style={{
           background: `
@@ -512,6 +902,92 @@ function MineVisualization({ upgrades, botCount = 0 }: { upgrades: typeof INITIA
             repeating-linear-gradient(0deg, transparent, transparent 20px, rgba(60, 40, 20, 0.2) 20px, rgba(60, 40, 20, 0.2) 21px)
           `
         }} />
+        
+        {/* SEASON 2: Multiple Mine Shafts */}
+        {mineCount > 1 && (
+          <div className="absolute inset-0 flex justify-around items-end pb-2 opacity-60">
+            {Array.from({ length: Math.min(mineCount, 4) }).map((_, i) => (
+              <div key={`shaft-${i}`} className="flex flex-col items-center">
+                <div className="w-8 h-16 bg-gradient-to-b from-purple-900/50 to-black rounded-t-lg border-2 border-purple-500/30" 
+                  style={{ animation: 'goldmineShine 2s ease-in-out infinite', animationDelay: `${i * 0.5}s` }}>
+                  <div className="w-full h-2 bg-purple-500/40 mt-1"></div>
+                  <div className="w-full h-2 bg-purple-500/30 mt-2"></div>
+                </div>
+                <span className="text-lg mt-1" style={{ filter: 'drop-shadow(0 0 8px rgba(168, 85, 247, 0.8))' }}>🏔️</span>
+              </div>
+            ))}
+          </div>
+        )}
+        
+        {/* SEASON 2: Diamond Mine sparkles */}
+        {hasDiamondMine && (
+          <div className="absolute inset-0 pointer-events-none">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div
+                key={`diamond-${i}`}
+                className="absolute text-lg"
+                style={{
+                  left: `${5 + Math.random() * 90}%`,
+                  top: `${5 + Math.random() * 90}%`,
+                  animation: `veinGlow 1.5s ease-in-out infinite`,
+                  animationDelay: `${Math.random() * 2}s`,
+                  filter: 'drop-shadow(0 0 8px rgba(6, 182, 212, 0.8))'
+                }}
+              >💎</div>
+            ))}
+          </div>
+        )}
+        
+        {/* SEASON 2: Lucky Clovers scattered */}
+        {hasLucky && (
+          <div className="absolute inset-0 pointer-events-none">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div
+                key={`clover-${i}`}
+                className="absolute text-sm"
+                style={{
+                  left: `${10 + Math.random() * 80}%`,
+                  top: `${10 + Math.random() * 80}%`,
+                  animation: `veinGlow 2s ease-in-out infinite`,
+                  animationDelay: `${Math.random() * 2}s`,
+                  filter: 'drop-shadow(0 0 6px rgba(16, 185, 129, 0.8))'
+                }}
+              >🍀</div>
+            ))}
+          </div>
+        )}
+        
+        {/* SEASON 2: Inferno flames */}
+        {hasInferno && (
+          <div className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div
+                key={`flame-${i}`}
+                className="absolute text-xl"
+                style={{
+                  left: `${i * 10 + Math.random() * 5}%`,
+                  bottom: `${Math.random() * 20}px`,
+                  animation: `dynamiteExplode 1s ease-in-out infinite`,
+                  animationDelay: `${Math.random()}s`,
+                  filter: 'drop-shadow(0 0 10px rgba(249, 115, 22, 0.8))'
+                }}
+              >🔥</div>
+            ))}
+          </div>
+        )}
+        
+        {/* SEASON 2: Golden Goat mascot */}
+        {hasGoat && (
+          <div className="absolute bottom-4 left-0 right-0">
+            <span 
+              className="absolute text-2xl"
+              style={{ 
+                animation: `minerWalk 8s linear infinite`,
+                filter: 'drop-shadow(0 0 12px rgba(251, 191, 36, 0.9))'
+              }}
+            >🐐</span>
+          </div>
+        )}
         
         {/* Gold veins */}
         <div className="absolute inset-0">
@@ -524,7 +1000,9 @@ function MineVisualization({ upgrades, botCount = 0 }: { upgrades: typeof INITIA
                 top: `${10 + Math.random() * 80}%`,
                 width: `${6 + Math.random() * 6}px`,
                 height: `${6 + Math.random() * 6}px`,
-                background: 'radial-gradient(circle, #D4AF37 0%, #996515 70%, transparent 100%)',
+                background: hasDiamondMine 
+                  ? 'radial-gradient(circle, #06B6D4 0%, #0891B2 70%, transparent 100%)'
+                  : 'radial-gradient(circle, #D4AF37 0%, #996515 70%, transparent 100%)',
                 animation: `veinGlow 2s ease-in-out infinite`,
                 animationDelay: `${Math.random() * 2}s`,
               }}
@@ -575,12 +1053,14 @@ function MineVisualization({ upgrades, botCount = 0 }: { upgrades: typeof INITIA
           ))}
         </div>
         
-        {/* Gold mines */}
-        <div className="absolute top-2 right-2 flex flex-col gap-1">
-          {Array.from({ length: Math.min(upgrades.goldmine.owned, 3) }).map((_, i) => (
-            <span key={`mine-${i}`} className="text-xl" style={{ animation: 'goldmineShine 3s ease-in-out infinite', animationDelay: `${i * 0.5}s` }}>🏔️</span>
-          ))}
-        </div>
+        {/* Gold mines (from upgrades, not Second Mine) */}
+        {!hasDiamondMine && (
+          <div className="absolute top-2 right-2 flex flex-col gap-1">
+            {Array.from({ length: Math.min(upgrades.goldmine.owned, 3) }).map((_, i) => (
+              <span key={`mine-${i}`} className="text-xl" style={{ animation: 'goldmineShine 3s ease-in-out infinite', animationDelay: `${i * 0.5}s` }}>🏔️</span>
+            ))}
+          </div>
+        )}
         
         {/* Auto-Miner Bots (premium item) */}
         {botCount > 0 && (
@@ -604,16 +1084,30 @@ function MineVisualization({ upgrades, botCount = 0 }: { upgrades: typeof INITIA
           {Array.from({ length: Math.min(Math.floor(Object.values(upgrades).reduce((s, u) => s + u.owned * u.perSec, 0) / 10) + totalUpgrades, 15) }).map((_, i) => (
             <div
               key={`particle-${i}`}
-              className="absolute w-1 h-1 bg-[#D4AF37] rounded-full"
+              className="absolute w-1 h-1 rounded-full"
               style={{
                 left: `${10 + Math.random() * 80}%`,
                 bottom: '20px',
+                background: hasDiamondMine ? '#06B6D4' : '#D4AF37',
                 animation: `floatParticle 4s ease-in-out infinite`,
                 animationDelay: `${Math.random() * 4}s`,
               }}
             />
           ))}
         </div>
+        
+        {/* SEASON 2: Boost lightning effect overlay */}
+        {boostMultiplier >= 5 && (
+          <div className="absolute inset-0 pointer-events-none" style={{
+            background: 'radial-gradient(circle at center, rgba(250, 204, 21, 0.1) 0%, transparent 70%)',
+            animation: 'veinGlow 0.5s ease-in-out infinite'
+          }}>
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-4xl" style={{
+              animation: 'dynamiteExplode 0.5s ease-in-out infinite',
+              filter: 'drop-shadow(0 0 20px rgba(250, 204, 21, 0.9))'
+            }}>⚡</div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -694,6 +1188,22 @@ export default function MinerGame() {
   const publicClient = usePublicClient();
   const { signMessageAsync } = useSignMessage();
 
+  // Transaction hook for shop purchases (cleaner than OnchainKit)
+  const { 
+    sendTransaction, 
+    data: txHash, 
+    isPending: isTxPending, 
+    isError: isTxError,
+    error: txErrorData,
+    reset: resetTx 
+  } = useSendTransaction();
+  
+  const { 
+    isLoading: isConfirming, 
+    isSuccess: isConfirmed,
+    data: txReceipt
+  } = useWaitForTransactionReceipt({ hash: txHash });
+
   // Contract reads
   const { data: totalSupply, refetch: refetchSupply } = useReadContract({
     address: BG_TOKEN,
@@ -740,6 +1250,57 @@ export default function MinerGame() {
   const [upgrades, setUpgrades] = useState(INITIAL_UPGRADES);
   const [appliedInstantGold, setAppliedInstantGold] = useState<Set<string>>(new Set());
   const [currentTime, setCurrentTime] = useState(Date.now());
+  
+  // ============ ANTI-CHEAT STATE ============
+  const antiCheatRef = useRef<AntiCheatState>({
+    clickIntervals: [],
+    clickPositions: [],
+    mouseMovements: 0,
+    suspicionFlags: 0,
+    isTabFocused: true,
+    lastAnalysis: Date.now(),
+    isSuspicious: false,
+    penaltyMultiplier: 1,
+    honeypotTriggered: false,
+    clicksSinceChallenge: 0,
+    lastChallengeTime: Date.now(),
+    challengesPassed: 0,
+    challengesFailed: 0,
+  });
+  const [antiCheatWarning, setAntiCheatWarning] = useState<string | null>(null);
+  const [showChallenge, setShowChallenge] = useState(false);
+  const [challengeTarget, setChallengeTarget] = useState<{x: number, y: number} | null>(null);
+  const [challengeTimeout, setChallengeTimeout] = useState<NodeJS.Timeout | null>(null);
+  const showChallengeRef = useRef(false); // Ref to avoid stale closure in timeout
+  showChallengeRef.current = showChallenge;
+  
+  // Cleanup challenge timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (challengeTimeout) clearTimeout(challengeTimeout);
+    };
+  }, [challengeTimeout]);
+  
+  // Track tab focus for anti-cheat
+  useEffect(() => {
+    const handleFocus = () => { antiCheatRef.current.isTabFocused = true; };
+    const handleBlur = () => { antiCheatRef.current.isTabFocused = false; };
+    
+    // Track mouse movement (bots don't move the mouse!)
+    const handleMouseMove = () => {
+      antiCheatRef.current.mouseMovements++;
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('mousemove', handleMouseMove);
+    
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('mousemove', handleMouseMove);
+    };
+  }, []);
   
   // UI state
   const [activeTab, setActiveTab] = useState<'game' | 'shop' | 'buy' | 'leaderboard' | 'stats'>('game');
@@ -1124,7 +1685,13 @@ export default function MinerGame() {
   const boostEndTime = verifiedBonuses.activeBoost?.endTime || null;
   const boostRemaining = verifiedBonuses.activeBoost?.remaining || 0;
   const hasCrown = verifiedBonuses.hasCrown;
+  const hasGoat = verifiedBonuses.hasGoat;
   const maxCombo = verifiedBonuses.maxCombo;
+  const globalMultiplier = verifiedBonuses.globalMultiplier;
+  const luckyChance = verifiedBonuses.luckyChance;
+  const luckyMultiplier = verifiedBonuses.luckyMultiplier;
+  const autoClickRate = verifiedBonuses.autoClickRate;
+  const mineCount = verifiedBonuses.mineCount;
 
   // ============ FETCH ON-CHAIN PURCHASES ============
   
@@ -1444,13 +2011,30 @@ export default function MinerGame() {
     if (playerName) localStorage.setItem('basegold-player-name', playerName);
   }, [playerName]);
 
-  // Passive income
+  // Passive income (with global multiplier from Second Mine)
   useEffect(() => {
     const interval = setInterval(() => {
-      if (goldPerSecond > 0) setGold(prev => prev + goldPerSecond);
+      if (goldPerSecond > 0) {
+        const passiveEarnings = Math.floor(goldPerSecond * globalMultiplier);
+        setGold(prev => prev + passiveEarnings);
+      }
     }, 1000);
     return () => clearInterval(interval);
-  }, [goldPerSecond]);
+  }, [goldPerSecond, globalMultiplier]);
+
+  // Auto-click from Golden Goat (Season 2)
+  useEffect(() => {
+    if (autoClickRate <= 0) return;
+    
+    const interval = setInterval(() => {
+      // Auto-clicks happen at autoClickRate times per second
+      const autoEarned = Math.floor(goldPerClick * globalMultiplier);
+      setGold(prev => prev + autoEarned);
+      setTotalClicks(prev => prev + 1);
+    }, 1000 / autoClickRate);
+    
+    return () => clearInterval(interval);
+  }, [autoClickRate, goldPerClick, globalMultiplier]);
 
   // Calculate total burned
   useEffect(() => {
@@ -1475,41 +2059,197 @@ export default function MinerGame() {
   // Click handler with rate limiting
   const handleClick = useCallback((e: React.MouseEvent) => {
     const now = Date.now();
+    const ac = antiCheatRef.current;
+    
+    // Block clicks if challenge is active
+    if (showChallenge) return;
+    
+    // ============ ANTI-CHEAT ANALYSIS ============
+    
+    // Track click interval
+    if (lastClickTime > 0) {
+      const interval = now - lastClickTime;
+      ac.clickIntervals.push(interval);
+      
+      // Keep only recent intervals
+      if (ac.clickIntervals.length > ANTI_CHEAT.PATTERN_WINDOW) {
+        ac.clickIntervals.shift();
+      }
+      
+      // Detect impossibly fast clicks (< 30ms = 33+ CPS, physically impossible)
+      if (interval < ANTI_CHEAT.MIN_CLICK_INTERVAL) {
+        ac.suspicionFlags += 2;
+        console.warn('⚠️ Anti-cheat: Impossibly fast click detected');
+      }
+    }
+    
+    // Track click position
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    ac.clickPositions.push({ x, y });
+    if (ac.clickPositions.length > ANTI_CHEAT.PATTERN_WINDOW) {
+      ac.clickPositions.shift();
+    }
+    
+    // Increment click counter for challenges
+    ac.clicksSinceChallenge++;
+    
+    // Analyze patterns every 50 clicks
+    if (ac.clickIntervals.length >= ANTI_CHEAT.PATTERN_WINDOW && now - ac.lastAnalysis > 5000) {
+      ac.lastAnalysis = now;
+      
+      const { variance, isBotLike } = analyzeClickPattern(ac.clickIntervals);
+      const samePosition = analyzeClickPositions(ac.clickPositions);
+      
+      // Check for bot-like timing
+      if (isBotLike) {
+        ac.suspicionFlags += 1;
+        console.warn(`⚠️ Anti-cheat: Bot-like timing detected (variance: ${(variance * 100).toFixed(1)}%)`);
+      }
+      
+      // Check for same position clicks
+      if (samePosition) {
+        ac.suspicionFlags += 1;
+        console.warn('⚠️ Anti-cheat: Same click position detected');
+      }
+      
+      // Check for no mouse movement (MAJOR red flag!)
+      if (ac.mouseMovements < ANTI_CHEAT.MOUSE_MOVEMENT_REQUIRED) {
+        ac.suspicionFlags += 3;
+        console.warn('⚠️ Anti-cheat: No mouse movement detected (likely script/bot)');
+      }
+      
+      // Reset mouse movement counter
+      ac.mouseMovements = 0;
+      
+      // Update suspicion status - SOFTENED: Max 10% earnings, no bans
+      if (ac.suspicionFlags >= ANTI_CHEAT.MAX_PENALTY_THRESHOLD) {
+        ac.isSuspicious = true;
+        ac.penaltyMultiplier = ANTI_CHEAT.BOT_PENALTY_MULTIPLIER; // 10% earnings (max penalty)
+        setAntiCheatWarning('⚠️ Automated clicking detected. Earnings reduced to 10%.');
+      } else if (ac.suspicionFlags >= ANTI_CHEAT.SUSPICION_THRESHOLD) {
+        ac.isSuspicious = true;
+        // Gradual penalty: scale from 50% to 10% based on flags
+        const penaltyScale = (ac.suspicionFlags - ANTI_CHEAT.SUSPICION_THRESHOLD) / 
+                            (ANTI_CHEAT.MAX_PENALTY_THRESHOLD - ANTI_CHEAT.SUSPICION_THRESHOLD);
+        ac.penaltyMultiplier = 0.5 - (penaltyScale * 0.4); // 50% down to 10%
+        setAntiCheatWarning('⚠️ Suspicious activity detected. Play manually for full earnings!');
+      }
+    }
+    
+    // Trigger challenge for high-speed sustained clicking
+    const currentCPS = clickTimestamps.current.length;
+    if (currentCPS >= ANTI_CHEAT.HIGH_SPEED_THRESHOLD && 
+        ac.clicksSinceChallenge >= ANTI_CHEAT.CHALLENGE_INTERVAL &&
+        now - ac.lastChallengeTime > 30000) { // Max one challenge per 30 seconds
+      // Show challenge
+      const target = generateChallengePosition();
+      setChallengeTarget(target);
+      setShowChallenge(true);
+      ac.lastChallengeTime = now;
+      ac.clicksSinceChallenge = 0;
+      
+      // Auto-fail if not completed in 5 seconds
+      const timeout = setTimeout(() => {
+        if (showChallengeRef.current) { // Use ref to avoid stale closure
+          ac.challengesFailed++;
+          ac.suspicionFlags += 2;
+          setShowChallenge(false);
+          setChallengeTarget(null);
+          setAntiCheatWarning('⚠️ Challenge failed. Suspicion increased.');
+        }
+      }, 5000);
+      setChallengeTimeout(timeout);
+      
+      return; // Don't process this click
+    }
+    
+    // ============ RATE LIMITING ============
     
     clickTimestamps.current = clickTimestamps.current.filter(t => now - t < 1000);
     if (clickTimestamps.current.length >= MAX_CLICKS_PER_SECOND) return;
     clickTimestamps.current.push(now);
     
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+    // ============ CALCULATE EARNINGS ============
     
     let newCombo = now - lastClickTime < 500 ? Math.min(combo + 1, maxCombo) : 1;
     setCombo(newCombo);
     setLastClickTime(now);
     
-    const earned = Math.floor(goldPerClick * clickMultiplier * newCombo);
+    // Check for lucky hit (Season 2)
+    const isLucky = luckyChance > 0 && Math.random() < luckyChance;
+    const luckyBonus = isLucky ? luckyMultiplier : 1;
+    
+    // Apply anti-cheat penalty
+    const focusPenalty = ac.isTabFocused ? 1 : ANTI_CHEAT.UNFOCUSED_PENALTY;
+    const cheatPenalty = ac.penaltyMultiplier;
+    
+    // Calculate earnings with all multipliers including anti-cheat penalties
+    const baseEarned = Math.floor(goldPerClick * clickMultiplier * newCombo * globalMultiplier * luckyBonus);
+    const earned = Math.max(1, Math.floor(baseEarned * focusPenalty * cheatPenalty)); // Minimum 1 gold per click
+    
     setGold(prev => prev + earned);
     setTotalClicks(prev => prev + 1);
     
-    // Play sounds
-    playSound('click', newCombo, soundEnabled);
-    if (newCombo >= 5) {
-      playSound('megaCombo', newCombo, soundEnabled);
-    } else if (newCombo > 1) {
-      playSound('combo', newCombo, soundEnabled);
+    // Play sounds (only if not penalized heavily)
+    if (cheatPenalty > 0.5) {
+      playSound('click', newCombo, soundEnabled);
+      if (isLucky) {
+        playSound('achievement', newCombo, soundEnabled);
+      } else if (newCombo >= 5) {
+        playSound('megaCombo', newCombo, soundEnabled);
+      } else if (newCombo > 1) {
+        playSound('combo', newCombo, soundEnabled);
+      }
     }
     
     const id = Date.now();
-    setFloatingTexts(prev => [...prev, { id, text: `+${formatNumber(earned)}`, x, y }]);
+    const displayText = isLucky ? `🍀 +${formatNumber(earned)}` : `+${formatNumber(earned)}`;
+    setFloatingTexts(prev => [...prev, { id, text: displayText, x, y }]);
     setTimeout(() => setFloatingTexts(prev => prev.filter(ft => ft.id !== id)), 1000);
-  }, [combo, lastClickTime, goldPerClick, clickMultiplier, maxCombo, soundEnabled]);
+  }, [combo, lastClickTime, goldPerClick, clickMultiplier, maxCombo, soundEnabled, luckyChance, luckyMultiplier, globalMultiplier, showChallenge]);
+
+  // Handle challenge completion
+  const handleChallengeClick = useCallback(() => {
+    const ac = antiCheatRef.current;
+    ac.challengesPassed++;
+    
+    // Reduce suspicion on successful challenge
+    ac.suspicionFlags = Math.max(0, ac.suspicionFlags - 2);
+    if (ac.suspicionFlags < ANTI_CHEAT.SUSPICION_THRESHOLD) {
+      ac.isSuspicious = false;
+      ac.penaltyMultiplier = 1;
+      setAntiCheatWarning(null);
+    }
+    
+    // Clear challenge
+    if (challengeTimeout) clearTimeout(challengeTimeout);
+    setShowChallenge(false);
+    setChallengeTarget(null);
+    playSound('achievement', 1, soundEnabled);
+  }, [challengeTimeout, soundEnabled]);
+
+  // Honeypot handler - bots will click this invisible button
+  const handleHoneypotClick = useCallback(() => {
+    const ac = antiCheatRef.current;
+    if (!ac.honeypotTriggered) {
+      ac.honeypotTriggered = true;
+      ac.suspicionFlags += 10; // Major flag - triggers max penalty
+      ac.penaltyMultiplier = ANTI_CHEAT.BOT_PENALTY_MULTIPLIER; // 10% earnings (not ban)
+      ac.isSuspicious = true;
+      setAntiCheatWarning('⚠️ Bot detected. Earnings reduced to 10%.');
+      console.warn('🍯 Anti-cheat: Honeypot triggered!');
+    }
+  }, []);
 
   const buyUpgrade = (key: keyof typeof upgrades) => {
     const upgrade = upgrades[key];
     if (gold >= upgrade.cost) {
       playSound('upgrade', 1, soundEnabled);
-      setGold(prev => prev - upgrade.cost);
+      // Use functional update with safety check to prevent negative gold
+      setGold(prev => Math.max(0, prev - upgrade.cost));
       setUpgrades(prev => ({
         ...prev,
         [key]: { ...prev[key], owned: prev[key].owned + 1, cost: Math.floor(prev[key].cost * prev[key].multiplier) }
@@ -1555,6 +2295,33 @@ export default function MinerGame() {
     });
     setVerificationError(null);
   }, [userBurnCount]);
+
+  // Handle transaction confirmation - auto start verification
+  const selectedItemRef = useRef(selectedItem);
+  selectedItemRef.current = selectedItem;
+  const txProcessedRef = useRef<string | null>(null); // Guard against double-firing
+  
+  useEffect(() => {
+    if (isConfirmed && selectedItemRef.current && txReceipt) {
+      // Guard: Don't process same transaction twice
+      const txHash = txReceipt.transactionHash;
+      if (txProcessedRef.current === txHash) return;
+      txProcessedRef.current = txHash;
+      
+      console.log('✅ Transaction confirmed:', txHash);
+      const item = selectedItemRef.current;
+      // Start verification process
+      startVerification(item);
+      // Reset transaction state
+      resetTx();
+      // Close checkout panel
+      setSelectedItem(null);
+      // Play success sound
+      playSound('purchase', 1, soundEnabled);
+      // Switch to game tab to show verification
+      setActiveTab('game');
+    }
+  }, [isConfirmed, txReceipt, startVerification, resetTx, soundEnabled]);
 
   // Parse burn stats
   const burnStatsArray = burnStats as [bigint, bigint, bigint] | undefined;
@@ -1977,8 +2744,9 @@ export default function MinerGame() {
             </div>
           </div>
           <div className="flex gap-2">
-            <FundButton 
-              className="h-9 px-4 bg-[#627EEA] text-white font-semibold text-xs rounded-lg hover:bg-[#5470D8] transition-all flex items-center gap-1.5"
+            <BuyEthButton 
+              address={address}
+              className="h-9 px-4 bg-[#0052FF] text-white font-semibold text-xs rounded-lg hover:bg-[#0040CC] transition-all flex items-center gap-1.5"
             />
             <a 
               href="https://relay.link/bridge/base" 
@@ -2111,7 +2879,7 @@ export default function MinerGame() {
             )}
 
             {/* On-Chain Verified Bonuses */}
-            {(verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || hasCrown || boostEndTime) && (
+            {(verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || hasCrown || hasGoat || boostEndTime || globalMultiplier > 1 || luckyChance > 0 || autoClickRate > 0) && (
               <div className="mb-4 p-3 bg-gradient-to-b from-green-500/10 to-green-500/5 border border-green-500/30 rounded-xl">
                 <div className="text-xs text-green-400 font-semibold mb-2 text-center flex items-center justify-center gap-2">
                   <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></span>
@@ -2130,6 +2898,34 @@ export default function MinerGame() {
                       <div className="text-green-300/80 text-[10px] uppercase tracking-wider">per second</div>
                     </div>
                   )}
+                  {/* Season 2: Global Multiplier (Second Mine) */}
+                  {globalMultiplier > 1 && (
+                    <div className="bg-gradient-to-r from-purple-500/20 to-pink-500/20 rounded-lg p-2.5 text-center border border-purple-500/30">
+                      <div className="text-purple-400 font-bold text-base">🏔️ {globalMultiplier}x</div>
+                      <div className="text-purple-300/80 text-[10px] uppercase tracking-wider">{mineCount} Mines Active</div>
+                    </div>
+                  )}
+                  {/* Season 2: Lucky Nugget */}
+                  {luckyChance > 0 && (
+                    <div className="bg-gradient-to-r from-emerald-500/20 to-green-500/20 rounded-lg p-2.5 text-center border border-emerald-500/30">
+                      <div className="text-emerald-400 font-bold text-base">🍀 {Math.round(luckyChance * 100)}%</div>
+                      <div className="text-emerald-300/80 text-[10px] uppercase tracking-wider">{luckyMultiplier}x Lucky Hits</div>
+                    </div>
+                  )}
+                  {/* Season 2: Golden Goat Auto-Click */}
+                  {autoClickRate > 0 && (
+                    <div className="bg-gradient-to-r from-yellow-500/20 to-amber-500/20 rounded-lg p-2.5 text-center border border-yellow-500/30">
+                      <div className="text-yellow-400 font-bold text-base">🐐 {autoClickRate}/sec</div>
+                      <div className="text-yellow-300/80 text-[10px] uppercase tracking-wider">Auto-Click</div>
+                    </div>
+                  )}
+                  {/* Crown/Goat Cosmetics */}
+                  {(hasCrown || hasGoat) && (
+                    <div className="bg-gradient-to-r from-amber-500/20 to-yellow-500/20 rounded-lg p-2.5 text-center border border-amber-500/30">
+                      <div className="text-amber-400 font-bold text-base">{hasGoat ? '🐐' : '👑'} {maxCombo}x</div>
+                      <div className="text-amber-300/80 text-[10px] uppercase tracking-wider">Max Combo</div>
+                    </div>
+                  )}
                 </div>
                 {boostEndTime && (
                   <div className="mt-2 p-2.5 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 rounded-lg text-center border border-yellow-500/30">
@@ -2140,16 +2936,86 @@ export default function MinerGame() {
               </div>
             )}
 
+            {/* Anti-Cheat Warning - Friendly yellow instead of harsh red */}
+            {antiCheatWarning && (
+              <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-xl text-center">
+                <div className="text-yellow-400 text-sm font-medium">{antiCheatWarning}</div>
+                <div className="text-yellow-300/60 text-xs mt-1">💡 Tip: Manual clicking = full rewards!</div>
+              </div>
+            )}
+
             {/* Gold Coin */}
             <div className="relative flex justify-center items-center h-56 mb-4">
               {floatingTexts.map(ft => (
-                <div key={ft.id} className="absolute pointer-events-none font-bold text-[#D4AF37] text-xl" style={{ left: ft.x, top: ft.y, animation: 'floatUp 1s ease-out forwards' }}>
+                <div key={ft.id} className={`absolute pointer-events-none font-bold text-xl ${ft.text.includes('🍀') ? 'text-emerald-400' : 'text-[#D4AF37]'}`} style={{ left: ft.x, top: ft.y, animation: 'floatUp 1s ease-out forwards' }}>
                   {ft.text}
                 </div>
               ))}
-              <button onClick={handleClick} className="w-44 h-44 rounded-full select-none bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] border-8 border-[#996515] shadow-[0_10px_30px_rgba(0,0,0,0.5),0_0_50px_rgba(212,175,55,0.3)] hover:shadow-[0_0_80px_rgba(212,175,55,0.5)] active:scale-95 transition-all duration-100 flex items-center justify-center text-4xl font-bold text-[#996515]">
+              
+              {/* Crown/Goat indicator */}
+              {(hasCrown || hasGoat) && !showChallenge && (
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 text-4xl animate-bounce">
+                  {hasGoat ? '🐐' : '👑'}
+                </div>
+              )}
+              
+              {/* Challenge Overlay */}
+              {showChallenge && challengeTarget && (
+                <div className="absolute inset-0 bg-black/80 rounded-xl z-20 flex flex-col items-center justify-center">
+                  <div className="text-yellow-400 text-lg font-bold mb-2 animate-pulse">⚡ HUMAN CHECK ⚡</div>
+                  <div className="text-gray-300 text-sm mb-4">Click the gold nugget!</div>
+                  <div className="relative w-40 h-40">
+                    <button
+                      onClick={handleChallengeClick}
+                      className="absolute w-12 h-12 rounded-full bg-gradient-to-br from-[#FFD700] to-[#FFA500] border-2 border-[#FF8C00] shadow-lg hover:scale-110 transition-transform flex items-center justify-center text-2xl animate-pulse"
+                      style={{
+                        left: `calc(50% + ${challengeTarget.x}px - 24px)`,
+                        top: `calc(50% + ${challengeTarget.y}px - 24px)`,
+                      }}
+                    >
+                      🪙
+                    </button>
+                  </div>
+                  <div className="text-gray-500 text-xs mt-2">5 seconds remaining...</div>
+                </div>
+              )}
+              
+              {/* Main BG Coin Button */}
+              <button onClick={handleClick} className={`w-44 h-44 rounded-full select-none border-8 shadow-[0_10px_30px_rgba(0,0,0,0.5),0_0_50px_rgba(212,175,55,0.3)] hover:shadow-[0_0_80px_rgba(212,175,55,0.5)] active:scale-95 transition-all duration-100 flex items-center justify-center text-4xl font-bold ${
+                showChallenge ? 'opacity-30 pointer-events-none' :
+                hasGoat 
+                  ? 'bg-gradient-to-br from-[#FFE4B5] via-[#FFD700] to-[#FFA500] border-[#FF8C00] text-[#8B4513]' 
+                  : hasCrown 
+                    ? 'bg-gradient-to-br from-[#FFF8DC] via-[#FFD700] to-[#DAA520] border-[#B8860B] text-[#8B4513]' 
+                    : 'bg-gradient-to-br from-[#F4E4BA] via-[#D4AF37] to-[#996515] border-[#996515] text-[#996515]'
+              }`}>
                 BG
               </button>
+              
+              {/* HONEYPOT TRAP - Invisible button that bots will click */}
+              {/* This button has textContent "BG" and large size, so naive bots will find it */}
+              <button 
+                onClick={handleHoneypotClick}
+                aria-hidden="true"
+                tabIndex={-1}
+                className="absolute opacity-0 pointer-events-auto"
+                style={{
+                  width: '180px',
+                  height: '180px',
+                  left: '50%',
+                  top: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  zIndex: -1,
+                  // Make it look like the real button to querySelector
+                }}
+              >
+                BG
+              </button>
+              
+              {/* Lucky indicator */}
+              {luckyChance > 0 && (
+                <div className="absolute bottom-0 right-1/4 text-2xl">🍀</div>
+              )}
             </div>
 
             {/* Upgrades */}
@@ -2178,7 +3044,16 @@ export default function MinerGame() {
             </div>
             
             {/* Mine Visualization */}
-            <MineVisualization upgrades={upgrades} botCount={verifiedBonuses.botCount} />
+            <MineVisualization 
+              upgrades={upgrades} 
+              botCount={verifiedBonuses.botCount} 
+              mineCount={mineCount} 
+              hasGoat={hasGoat} 
+              hasLucky={verifiedBonuses.hasLucky}
+              hasDiamondMine={verifiedBonuses.hasDiamondMine}
+              hasInferno={verifiedBonuses.hasInferno}
+              boostMultiplier={clickMultiplier}
+            />
             
             {/* Ad Banner */}
             <AdBanner />
@@ -2203,8 +3078,10 @@ export default function MinerGame() {
                 <div className="text-xs text-gray-400 mb-3">Shop purchases are paid in ETH (which buys & burns BG automatically)</div>
                 <div className="flex gap-2">
                   <div className="flex-1">
-                    <FundButton 
-                      className="w-full py-2 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all"
+                    <BuyEthButton 
+                      address={address}
+                      className="w-full py-2 bg-[#0052FF] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"
+                      fullWidth
                     />
                   </div>
                   <a 
@@ -2241,6 +3118,9 @@ export default function MinerGame() {
                     {verificationSuccess.effect.type === 'instant_gold' && `+${verificationSuccess.effect.hours} hour(s) of gold`}
                     {verificationSuccess.effect.type === 'cosmetic' && `Crown unlocked!`}
                     {verificationSuccess.effect.type === 'burn_bonus' && `+${verificationSuccess.effect.clickAmount}/click, +${verificationSuccess.effect.passiveAmount}/sec + BG burned!`}
+                    {verificationSuccess.effect.type === 'global_multiplier' && `🏔️ ${verificationSuccess.effect.multiplier}x GLOBAL multiplier on ALL earnings!`}
+                    {verificationSuccess.effect.type === 'golden_goat' && `🐐 ${verificationSuccess.effect.maxCombo}x max combo + ${verificationSuccess.effect.autoClick}/sec auto-clicks!`}
+                    {verificationSuccess.effect.type === 'lucky' && `🍀 ${Math.round((verificationSuccess.effect.chance || 0) * 100)}% chance for ${verificationSuccess.effect.multiplier}x gold per click!`}
                   </div>
                 </div>
                 <div className="text-xs text-gray-400 mt-2">Transaction confirmed on Base</div>
@@ -2260,9 +3140,20 @@ export default function MinerGame() {
 
             {/* Shop Items */}
             <div className="space-y-2">
+              {/* Season 2 Banner */}
+              <div className="mb-4 p-3 bg-gradient-to-r from-purple-600/20 via-pink-500/20 to-orange-500/20 border border-purple-500/30 rounded-xl">
+                <div className="flex items-center justify-center gap-2">
+                  <span className="text-2xl">🆕</span>
+                  <span className="font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 via-pink-400 to-orange-400">SEASON 2 ITEMS NOW AVAILABLE!</span>
+                  <span className="text-2xl">🆕</span>
+                </div>
+              </div>
+              
               {SHOP_ITEMS.map(item => {
                 const purchaseCount = verifiedPurchaseCounts[item.id] || 0;
                 const isDisabled = !!pendingVerification;
+                const isSeason2 = (item as any).season === 2;
+                const itemTag = (item as any).tag;
                 
                 return (
                   <div key={item.id}>
@@ -2275,14 +3166,29 @@ export default function MinerGame() {
                         }
                       }}
                       disabled={isDisabled}
-                      className={`w-full p-3 rounded-xl border transition-all text-left ${isDisabled ? 'opacity-50' : ''} ${selectedItem?.id === item.id ? 'bg-[#627EEA]/20 border-[#627EEA]' : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'}`}
+                      className={`w-full p-3 rounded-xl border transition-all text-left ${isDisabled ? 'opacity-50' : ''} ${
+                        selectedItem?.id === item.id 
+                          ? 'bg-[#627EEA]/20 border-[#627EEA]' 
+                          : isSeason2 
+                            ? 'bg-gradient-to-r from-purple-900/20 to-pink-900/20 border-purple-500/30 hover:border-purple-400/50' 
+                            : 'bg-white/5 border-white/10 hover:border-[#D4AF37]/50'
+                      }`}
                     >
                       <div className="flex justify-between items-start">
                         <div className="flex items-center gap-2">
-                          <span className="text-2xl">{item.emoji}</span>
+                          <span className={`text-2xl ${isSeason2 ? 'animate-pulse' : ''}`}>{item.emoji}</span>
                           <div>
-                            <div className="font-medium text-sm flex items-center gap-2">
+                            <div className="font-medium text-sm flex items-center gap-2 flex-wrap">
                               {item.name}
+                              {itemTag && (
+                                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                                  itemTag === 'LEGENDARY' ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-black' :
+                                  itemTag === 'EPIC' ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' :
+                                  'bg-gradient-to-r from-green-500 to-emerald-500 text-white'
+                                }`}>
+                                  {itemTag}
+                                </span>
+                              )}
                               {purchaseCount > 0 && (
                                 <span className="text-xs bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded flex items-center gap-1">
                                   <span className="w-1.5 h-1.5 bg-green-500 rounded-full"></span>
@@ -2294,98 +3200,118 @@ export default function MinerGame() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-[#627EEA] font-bold">{item.priceETH} ETH</div>
+                          <div className={`font-bold ${isSeason2 ? 'text-purple-400' : 'text-[#627EEA]'}`}>{item.priceETH} ETH</div>
                           <div className="text-xs text-gray-500">{item.priceUSD}</div>
                         </div>
                       </div>
                     </button>
                     
                     {selectedItem?.id === item.id && isConnected && !pendingVerification && (
-                      <div className="mt-2 p-3 bg-black/50 rounded-lg space-y-3">
+                      <div className="mt-2 p-4 bg-gradient-to-b from-black/60 to-black/40 rounded-xl border border-white/10 space-y-4">
                         
-                        {/* Show status based on transaction state */}
-                        {txStatus === 'transactionPending' ? (
-                          <>
-                            {/* Transaction submitted - waiting for confirmation */}
-                            <div className="p-3 bg-green-500/20 border border-green-500/50 rounded-lg text-center">
-                              <div className="flex items-center justify-center gap-2 mb-2">
-                                <div className="w-5 h-5 border-2 border-green-400 border-t-transparent rounded-full animate-spin"></div>
-                                <span className="text-green-400 font-medium">Transaction Submitted!</span>
-                              </div>
-                              <div className="text-green-300 text-sm">Waiting for blockchain confirmation...</div>
-                              <div className="text-gray-400 text-xs mt-2">This usually takes 1-3 seconds</div>
+                        {/* Price Breakdown */}
+                        <div className="p-3 bg-white/5 rounded-lg">
+                          <div className="flex justify-between items-center mb-2">
+                            <span className="text-gray-400 text-sm">Item Price</span>
+                            <span className="text-white font-mono">{item.priceETH} ETH</span>
+                          </div>
+                          <div className="flex justify-between items-center mb-2">
+                            <span className="text-gray-400 text-sm">Network Fee (est.)</span>
+                            <span className="text-gray-300 font-mono text-sm">~$0.01</span>
+                          </div>
+                          <div className="border-t border-white/10 pt-2 mt-2">
+                            <div className="flex justify-between items-center">
+                              <span className="text-white font-medium">Total</span>
+                              <span className="text-[#D4AF37] font-bold">{item.priceETH} ETH</span>
                             </div>
-                            
-                            {/* Close button (can't cancel on-chain tx) */}
-                            <button
-                              onClick={() => {
-                                setSelectedItem(null);
-                                setTxStatus('init');
-                              }}
-                              className="w-full py-2 bg-gray-700/50 border border-gray-600 text-gray-300 rounded-lg text-sm hover:bg-gray-600/50 transition-all"
-                            >
-                              Close
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <div className="text-xs text-gray-400 text-center">
-                              ⏱️ After purchase, we'll verify on-chain before applying effects
+                          </div>
+                        </div>
+
+                        {/* What You Get */}
+                        <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                          <div className="text-green-400 text-xs font-medium mb-1">✨ What you get:</div>
+                          <div className="text-green-300 text-sm">{item.description}</div>
+                        </div>
+
+                        {/* Transaction States */}
+                        {isTxPending && (
+                          <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-center">
+                            <div className="flex items-center justify-center gap-2">
+                              <div className="w-4 h-4 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></div>
+                              <span className="text-yellow-400 text-sm">Confirm in your wallet...</span>
                             </div>
-                            
-                            {/* Show error if transaction failed */}
-                            {txError && (
-                              <div className="p-2 bg-red-500/20 border border-red-500/50 rounded-lg text-center">
-                                <div className="text-red-400 text-sm">Transaction failed</div>
-                                <div className="text-gray-400 text-xs mt-1">Please try again</div>
-                              </div>
-                            )}
-                            
-                            <Transaction
-                              chainId={base.id}
-                              calls={buildPurchaseCalls(item.priceETH)}
-                              onSuccess={(response) => {
-                                console.log('✅ Transaction success:', response);
-                                setTxError(null);
-                                setTxStatus('init');
-                                startVerification(item);
-                              }}
-                              onError={(error) => {
-                                console.error('❌ Transaction error:', error);
-                                setTxError('Transaction was rejected or failed');
-                                setTxStatus('init');
-                              }}
-                              onStatus={(status) => {
-                                console.log('📝 Status:', status.statusName);
-                                setTxStatus(status.statusName);
-                                if (status.statusName === 'init') {
-                                  setTxError(null);
-                                }
-                              }}
-                            >
-                              <TransactionButton 
-                                text={`Pay ${item.priceETH} ETH & Burn BG 🔥`}
-                                className="w-full py-3 rounded-lg font-bold bg-gradient-to-r from-orange-500 to-red-500 text-sm"
-                              />
-                              <TransactionStatus>
-                                <TransactionStatusLabel />
-                                <TransactionStatusAction />
-                              </TransactionStatus>
-                            </Transaction>
-                            
-                            {/* Cancel button - only when not pending */}
-                            <button
-                              onClick={() => {
-                                setSelectedItem(null);
-                                setTxError(null);
-                                setTxStatus('init');
-                              }}
-                              className="w-full py-2 bg-gray-700/50 border border-gray-600 text-gray-300 rounded-lg text-sm hover:bg-gray-600/50 transition-all"
-                            >
-                              ✕ Cancel
-                            </button>
-                          </>
+                          </div>
                         )}
+
+                        {isConfirming && (
+                          <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg text-center">
+                            <div className="flex items-center justify-center gap-2 mb-1">
+                              <div className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                              <span className="text-blue-400 font-medium">Transaction Submitted!</span>
+                            </div>
+                            <div className="text-blue-300 text-xs">Confirming on Base... (~2 sec)</div>
+                          </div>
+                        )}
+
+                        {isTxError && (
+                          <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-center">
+                            <div className="text-red-400 text-sm">❌ Transaction failed or rejected</div>
+                            <button 
+                              onClick={() => resetTx()}
+                              className="text-red-300 text-xs underline mt-1"
+                            >
+                              Try again
+                            </button>
+                          </div>
+                        )}
+                        
+                        {/* Buy Button */}
+                        {!isTxPending && !isConfirming && (
+                          <button
+                            onClick={() => {
+                              // Send transaction with reasonable gas limit
+                              sendTransaction({
+                                to: INSTANT_BURN,
+                                value: parseEther(item.priceETH),
+                                data: encodeFunctionData({
+                                  abi: INSTANT_BURN_ABI,
+                                  functionName: 'buyAndBurn',
+                                  args: [],
+                                }),
+                                gas: BigInt(150000), // Fixed gas limit to prevent overestimation
+                              });
+                            }}
+                            disabled={!ethBalance || parseFloat(ethBalance.formatted) < parseFloat(item.priceETH)}
+                            className={`w-full py-3 rounded-xl font-bold text-sm transition-all ${
+                              ethBalance && parseFloat(ethBalance.formatted) >= parseFloat(item.priceETH)
+                                ? 'bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 text-white shadow-lg shadow-orange-500/20'
+                                : 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                            }`}
+                          >
+                            {ethBalance && parseFloat(ethBalance.formatted) < parseFloat(item.priceETH)
+                              ? `Insufficient ETH (need ${item.priceETH})`
+                              : `🔥 Pay ${item.priceETH} ETH & Burn BG`
+                            }
+                          </button>
+                        )}
+                        
+                        {/* Cancel Button */}
+                        <button
+                          onClick={() => {
+                            setSelectedItem(null);
+                            setTxError(null);
+                            setTxStatus('init');
+                            resetTx();
+                          }}
+                          className="w-full py-2 text-gray-400 hover:text-white text-sm transition-all"
+                        >
+                          ✕ Cancel
+                        </button>
+
+                        {/* Security Note */}
+                        <div className="text-[10px] text-gray-500 text-center">
+                          🔐 Verified on Base blockchain • Effects apply after confirmation
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2464,8 +3390,10 @@ export default function MinerGame() {
               </div>
               <div className="flex gap-2">
                 <div className="flex-1">
-                  <FundButton 
-                    className="w-full py-2.5 bg-[#627EEA] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#5470D8] transition-all"
+                  <BuyEthButton 
+                    address={address}
+                    className="w-full py-2.5 bg-[#0052FF] text-white font-semibold text-sm rounded-lg text-center hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"
+                    fullWidth
                   />
                 </div>
                 <a 
