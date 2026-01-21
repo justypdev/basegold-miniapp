@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { sdk } from '@farcaster/frame-sdk';
-import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage, useConnect, useDisconnect, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
+import { useAppKit } from '@reown/appkit/react';
+import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
 
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
@@ -1174,15 +1175,12 @@ function VerificationStatus({ status, item }: { status: string; item: typeof SHO
 export default function MinerGame() {
   const [isReady, setIsReady] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
-  const [copiedAddress, setCopiedAddress] = useState(false);
   const sessionStartTime = useRef(Date.now());
   const clickTimestamps = useRef<number[]>([]);
   
   // Wallet
   const { address, isConnected } = useAccount();
-  const { connectors, connect, isPending: isConnecting } = useConnect();
-  const { disconnect } = useDisconnect();
-  const [showWalletModal, setShowWalletModal] = useState(false);
+  const appKit = useAppKit();
   const { data: ethBalance } = useBalance({ address });
   const { data: bgBalance } = useBalance({ address, token: BG_TOKEN });
   const publicClient = usePublicClient();
@@ -2379,128 +2377,6 @@ export default function MinerGame() {
         </div>
       )}
 
-      {/* Wallet Selection Modal */}
-      {showWalletModal && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setShowWalletModal(false)}>
-          <div className="bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-2xl p-6 max-w-sm w-full" onClick={e => e.stopPropagation()}>
-            <div className="text-center mb-6">
-              <div className="text-4xl mb-2">🔗</div>
-              <h2 className="text-xl font-bold text-[#D4AF37]">Connect Wallet</h2>
-              <p className="text-gray-400 text-sm mt-1">Choose your wallet to continue</p>
-            </div>
-            
-            <div className="space-y-3">
-              {/* Check if we're on mobile */}
-              {(() => {
-                const isMobile = typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-                const hasEthereum = typeof window !== 'undefined' && !!window.ethereum;
-                const isInMetaMask = typeof window !== 'undefined' && window.ethereum?.isMetaMask;
-                
-                return (
-                  <>
-                    {/* MetaMask Option */}
-                    {isMobile && !isInMetaMask ? (
-                      // Mobile Safari/Chrome - Deep link to MetaMask app
-                      <a
-                        href={`https://metamask.app.link/dapp/${typeof window !== 'undefined' ? window.location.host + window.location.pathname : 'basegold-miniapp.vercel.app'}`}
-                        className="w-full flex items-center gap-4 p-4 bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/30 hover:border-orange-500/50 rounded-xl transition-all"
-                      >
-                        <span className="text-3xl">🦊</span>
-                        <div className="text-left flex-1">
-                          <div className="text-white font-medium">MetaMask</div>
-                          <div className="text-xs text-orange-400">Open in MetaMask app</div>
-                        </div>
-                        <span className="text-orange-400">↗</span>
-                      </a>
-                    ) : (
-                      // Desktop or already in MetaMask browser - use connector
-                      connectors.filter(c => c.id === 'injected' || c.name.toLowerCase().includes('metamask')).map((connector) => (
-                        <button
-                          key={connector.uid}
-                          onClick={() => {
-                            connect({ connector });
-                            setShowWalletModal(false);
-                          }}
-                          disabled={isConnecting}
-                          className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
-                        >
-                          <span className="text-3xl">🦊</span>
-                          <div className="text-left flex-1">
-                            <div className="text-white font-medium">MetaMask</div>
-                            <div className="text-xs text-gray-500">{hasEthereum ? 'Connect now' : 'Browser extension'}</div>
-                          </div>
-                          <span className="text-gray-500">→</span>
-                        </button>
-                      ))
-                    )}
-                    
-                    {/* Coinbase Wallet - works on both mobile and desktop */}
-                    {connectors.filter(c => c.name.toLowerCase().includes('coinbase')).map((connector) => (
-                      <button
-                        key={connector.uid}
-                        onClick={() => {
-                          connect({ connector });
-                          setShowWalletModal(false);
-                        }}
-                        disabled={isConnecting}
-                        className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
-                      >
-                        <span className="text-3xl">🔵</span>
-                        <div className="text-left flex-1">
-                          <div className="text-white font-medium">Coinbase Wallet</div>
-                          <div className="text-xs text-gray-500">Smart Wallet or Extension</div>
-                        </div>
-                        <span className="text-gray-500">→</span>
-                      </button>
-                    ))}
-                    
-                    {/* Other connectors */}
-                    {connectors.filter(c => 
-                      !c.name.toLowerCase().includes('coinbase') && 
-                      !c.name.toLowerCase().includes('metamask') &&
-                      c.id !== 'injected'
-                    ).map((connector) => (
-                      <button
-                        key={connector.uid}
-                        onClick={() => {
-                          connect({ connector });
-                          setShowWalletModal(false);
-                        }}
-                        disabled={isConnecting}
-                        className="w-full flex items-center gap-4 p-4 bg-white/5 hover:bg-[#D4AF37]/10 border border-white/10 hover:border-[#D4AF37]/30 rounded-xl transition-all disabled:opacity-50"
-                      >
-                        <span className="text-3xl">👛</span>
-                        <div className="text-left flex-1">
-                          <div className="text-white font-medium">{connector.name}</div>
-                          <div className="text-xs text-gray-500">Web3 Wallet</div>
-                        </div>
-                        <span className="text-gray-500">→</span>
-                      </button>
-                    ))}
-                  </>
-                );
-              })()}
-            </div>
-            
-            {/* Help text for mobile */}
-            {typeof window !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && !window.ethereum && (
-              <div className="mt-4 p-3 bg-white/5 rounded-lg">
-                <p className="text-xs text-gray-400 text-center">
-                  📱 <strong className="text-gray-300">Mobile?</strong> Tap MetaMask to open the app. Your progress saves to your wallet address!
-                </p>
-              </div>
-            )}
-            
-            <button
-              onClick={() => setShowWalletModal(false)}
-              className="w-full mt-4 py-3 text-gray-400 hover:text-white transition-all text-sm"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Session Conflict Modal */}
       {showSessionConflict && conflictInfo && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4">
@@ -2621,73 +2497,22 @@ export default function MinerGame() {
             {soundEnabled ? '🔊' : '🔇'}
           </button>
           
-          {/* Custom Wallet Connection */}
+          {/* Reown AppKit Wallet Connection - includes Swaps & Onramp! */}
           {isConnected ? (
-            <div className="relative group">
-              <button className="flex items-center gap-2 px-3 py-2 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-lg hover:bg-[#D4AF37]/20 transition-all">
-                <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#D4AF37] to-[#996515] flex items-center justify-center text-[10px] font-bold text-black">
-                  {address?.slice(2, 4).toUpperCase()}
-                </div>
-                <span className="text-xs text-[#D4AF37] font-medium">
-                  {address?.slice(0, 6)}...{address?.slice(-4)}
-                </span>
-                <span className="text-gray-500 text-xs">▼</span>
-              </button>
-              {/* Dropdown */}
-              <div className="absolute right-0 top-full mt-1 w-56 bg-[#1A1A1A] border border-[#D4AF37]/30 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
-                {/* Address Section */}
-                <div className="p-3 border-b border-white/10">
-                  <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Connected Wallet</div>
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="text-sm text-white font-mono truncate">{address?.slice(0, 10)}...{address?.slice(-6)}</div>
-                    <button
-                      onClick={() => {
-                        if (address) {
-                          navigator.clipboard.writeText(address);
-                          setCopiedAddress(true);
-                          setTimeout(() => setCopiedAddress(false), 2000);
-                        }
-                      }}
-                      className="p-1.5 hover:bg-white/10 rounded-md transition-all"
-                      title="Copy address"
-                    >
-                      {copiedAddress ? (
-                        <span className="text-green-400 text-sm">✓</span>
-                      ) : (
-                        <span className="text-gray-400 text-sm">📋</span>
-                      )}
-                    </button>
-                  </div>
-                  {copiedAddress && (
-                    <div className="text-[10px] text-green-400 mt-1">Address copied!</div>
-                  )}
-                </div>
-                
-                {/* Actions */}
-                <div className="p-1">
-                  <a
-                    href={`https://basescan.org/address/${address}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full px-3 py-2 text-left text-gray-300 hover:bg-white/5 transition-all flex items-center gap-2 rounded-lg text-sm"
-                  >
-                    <span>🔍</span>
-                    <span>View on BaseScan</span>
-                    <span className="ml-auto text-gray-500 text-xs">↗</span>
-                  </a>
-                  <button
-                    onClick={() => disconnect()}
-                    className="w-full px-3 py-2 text-left text-red-400 hover:bg-red-500/10 transition-all flex items-center gap-2 rounded-lg text-sm"
-                  >
-                    <span>🚪</span>
-                    <span>Disconnect</span>
-                  </button>
-                </div>
+            <button
+              onClick={() => appKit.open({ view: 'Account' })}
+              className="flex items-center gap-2 px-3 py-2 bg-[#D4AF37]/10 border border-[#D4AF37]/30 rounded-lg hover:bg-[#D4AF37]/20 transition-all"
+            >
+              <div className="w-6 h-6 rounded-full bg-gradient-to-br from-[#D4AF37] to-[#996515] flex items-center justify-center text-[10px] font-bold text-black">
+                {address?.slice(2, 4).toUpperCase()}
               </div>
-            </div>
+              <span className="text-xs text-[#D4AF37] font-medium">
+                {address?.slice(0, 6)}...{address?.slice(-4)}
+              </span>
+            </button>
           ) : (
             <button
-              onClick={() => setShowWalletModal(true)}
+              onClick={() => appKit.open()}
               className="px-4 py-2 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold text-sm rounded-lg hover:shadow-lg hover:shadow-[#D4AF37]/20 transition-all"
             >
               Connect
@@ -3352,7 +3177,7 @@ export default function MinerGame() {
               <div className="mt-4 text-center">
                 <p className="text-gray-400 text-sm mb-2">Connect wallet to purchase</p>
                 <button
-                  onClick={() => setShowWalletModal(true)}
+                  onClick={() => appKit.open()}
                   className="px-6 py-3 bg-gradient-to-r from-[#D4AF37] to-[#996515] text-black font-bold rounded-lg hover:shadow-lg hover:shadow-[#D4AF37]/20 transition-all"
                 >
                   🔗 Connect Wallet
