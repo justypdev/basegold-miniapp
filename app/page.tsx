@@ -271,27 +271,55 @@ function generateChallengePosition(): { x: number; y: number } {
   };
 }
 
-// ============ BUY ETH BUTTON - Direct to Base via Coinbase Pay ============
+// ============ BUY ETH BUTTON - Uses Coinbase CDP API for Base ETH ============
 
 function BuyEthButton({ address, className }: { address?: string; className?: string }) {
-  const handleBuyEth = () => {
+  const [loading, setLoading] = useState(false);
+  
+  const handleBuyEth = async () => {
     if (!address) return;
+    setLoading(true);
     
-    // Direct Coinbase Pay URL - goes straight to Base ETH
-    const coinbasePayUrl = `https://pay.coinbase.com/buy/select-asset?addresses=${encodeURIComponent(JSON.stringify({[address]: ["base"]}))}&assets=${encodeURIComponent(JSON.stringify(["ETH"]))}`;
+    // Fallback URL for Base ETH
+    const fallbackUrl = `https://pay.coinbase.com/buy/select-asset?addresses=${encodeURIComponent(JSON.stringify({[address]: ["base"]}))}&assets=${encodeURIComponent(JSON.stringify(["ETH"]))}`;
     
-    // Open in new tab
-    window.open(coinbasePayUrl, '_blank');
+    try {
+      // Call our API to get a Coinbase session token
+      const res = await fetch('/api/onramp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address }),
+      });
+      
+      const data = await res.json();
+      
+      // Use the URL from API response (either session token URL or fallback)
+      const targetUrl = data.url || fallbackUrl;
+      window.open(targetUrl, '_blank');
+      
+    } catch (err) {
+      console.error('Onramp error:', err);
+      // On error, use fallback URL
+      window.open(fallbackUrl, '_blank');
+    } finally {
+      setLoading(false);
+    }
   };
   
   return (
     <button
       onClick={handleBuyEth}
-      disabled={!address}
+      disabled={!address || loading}
       className={className || "h-9 px-4 bg-[#0052FF] text-white font-semibold text-xs rounded-lg hover:bg-[#0040CC] transition-all flex items-center justify-center gap-1.5"}
     >
-      <span>⊕</span>
-      <span>Buy ETH</span>
+      {loading ? (
+        <span className="animate-pulse">Loading...</span>
+      ) : (
+        <>
+          <span>⊕</span>
+          <span>Buy ETH</span>
+        </>
+      )}
     </button>
   );
 }
