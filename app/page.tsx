@@ -1558,7 +1558,24 @@ export default function MinerGame() {
           // Restore state
           if (typeof data.gameState.gold === 'number') setGold(data.gameState.gold);
           if (typeof data.gameState.totalClicks === 'number') setTotalClicks(data.gameState.totalClicks);
-          if (data.gameState.upgrades) setUpgrades(data.gameState.upgrades);
+          
+          // Merge saved upgrades with new defaults (in case new upgrades were added)
+          if (data.gameState.upgrades) {
+            setUpgrades(prev => {
+              const merged = { ...INITIAL_UPGRADES };
+              // Copy over saved upgrade data, preserving new upgrade defaults
+              Object.keys(data.gameState.upgrades).forEach(key => {
+                if (merged[key as keyof typeof merged]) {
+                  merged[key as keyof typeof merged] = {
+                    ...merged[key as keyof typeof merged],
+                    ...data.gameState.upgrades[key],
+                  };
+                }
+              });
+              return merged;
+            });
+          }
+          
           if (Array.isArray(data.gameState.appliedInstantGold)) {
             setAppliedInstantGold(new Set(data.gameState.appliedInstantGold));
           }
