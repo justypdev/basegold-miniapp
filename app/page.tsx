@@ -1824,6 +1824,11 @@ export default function MinerGame() {
   
   const fetchVerifiedPurchases = useCallback(async (): Promise<OnChainPurchase[]> => {
     if (!address) {
+      // SECURITY FIX: Clear all verified purchases and bonuses when wallet disconnects
+      // This prevents users from getting bonuses without holding tokens
+      setVerifiedPurchases([]);
+      setUserBurnCount(0);
+      setUserBurnAmount(0);
       setLoadingVerification(false);
       return [];
     }
@@ -1884,6 +1889,17 @@ export default function MinerGame() {
   useEffect(() => {
     fetchVerifiedPurchases();
   }, [fetchVerifiedPurchases]);
+
+  // SECURITY: Explicitly clear bonuses when wallet disconnects
+  // This is a safety net in addition to the check in fetchVerifiedPurchases
+  useEffect(() => {
+    if (!isConnected) {
+      setVerifiedPurchases([]);
+      setUserBurnCount(0);
+      setUserBurnAmount(0);
+      console.log('🔒 Wallet disconnected - cleared verified bonuses');
+    }
+  }, [isConnected]);
 
   // ============ PURCHASE VERIFICATION POLLING ============
   
@@ -2998,8 +3014,8 @@ export default function MinerGame() {
               </div>
             )}
 
-            {/* On-Chain Verified Bonuses */}
-            {(verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || hasCrown || hasGoat || boostEndTime || globalMultiplier > 1 || luckyChance > 0 || autoClickRate > 0) && (
+            {/* On-Chain Verified Bonuses - Only show when connected and has bonuses */}
+            {isConnected && (verifiedBonuses.bonusClick > 0 || verifiedBonuses.bonusPassive > 0 || hasCrown || hasGoat || boostEndTime || globalMultiplier > 1 || luckyChance > 0 || autoClickRate > 0) && (
               <div className="mb-4 p-3 bg-gradient-to-b from-green-500/10 to-green-500/5 border border-green-500/30 rounded-xl">
                 <div className="text-xs text-green-400 font-semibold mb-2 text-center flex items-center justify-center gap-2">
                   <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-lg shadow-green-500/50"></span>
