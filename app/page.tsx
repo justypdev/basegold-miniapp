@@ -181,7 +181,7 @@ const INITIAL_SUPPLY = 10000;
 
 // ============ SECURITY CONSTANTS ============
 
-const MAX_CLICKS_PER_SECOND = 20;
+const MAX_CLICKS_PER_SECOND = 15;
 const MIN_BURNS_FOR_LEADERBOARD = 1;
 const VERIFICATION_POLL_INTERVAL = 2000; // Poll every 2 seconds
 const VERIFICATION_MAX_ATTEMPTS = 30; // Max 60 seconds of polling
@@ -524,13 +524,112 @@ const SHOP_ITEMS = [
 // ============ UPGRADES ============
 
 const INITIAL_UPGRADES = {
-  pickaxe: { cost: 50, owned: 0, multiplier: 1.5, perClick: 1, perSec: 0, emoji: '⛏️', name: 'Better Pickaxe' },
-  miner: { cost: 100, owned: 0, multiplier: 1.5, perClick: 0, perSec: 1, emoji: '👷', name: 'Hire Miner' },
-  drill: { cost: 500, owned: 0, multiplier: 1.5, perClick: 0, perSec: 5, emoji: '🔧', name: 'Gold Drill' },
-  excavator: { cost: 2000, owned: 0, multiplier: 1.5, perClick: 0, perSec: 20, emoji: '🚜', name: 'Excavator' },
-  dynamite: { cost: 5000, owned: 0, multiplier: 1.5, perClick: 0, perSec: 50, emoji: '🧨', name: 'Dynamite' },
-  goldmine: { cost: 20000, owned: 0, multiplier: 1.5, perClick: 0, perSec: 200, emoji: '🏔️', name: 'Gold Mine' },
+  pickaxe: { cost: 50, owned: 0, multiplier: 1.5, perClick: 1, perSec: 0, emoji: '⛏️', name: 'Better Pickaxe', unlockLevel: 1 },
+  miner: { cost: 100, owned: 0, multiplier: 1.5, perClick: 0, perSec: 1, emoji: '👷', name: 'Hire Miner', unlockLevel: 2 },
+  drill: { cost: 500, owned: 0, multiplier: 1.5, perClick: 0, perSec: 5, emoji: '🔧', name: 'Gold Drill', unlockLevel: 5 },
+  excavator: { cost: 2000, owned: 0, multiplier: 1.5, perClick: 0, perSec: 20, emoji: '🚜', name: 'Excavator', unlockLevel: 10 },
+  dynamite: { cost: 5000, owned: 0, multiplier: 1.5, perClick: 0, perSec: 50, emoji: '🧨', name: 'Dynamite', unlockLevel: 15 },
+  goldmine: { cost: 20000, owned: 0, multiplier: 1.5, perClick: 0, perSec: 200, emoji: '🏔️', name: 'Gold Mine', unlockLevel: 25 },
+  // Strategic upgrades - add luck and multiplicative bonuses
+  luckyStrike: { cost: 10000, owned: 0, multiplier: 1.6, perClick: 0, perSec: 0, emoji: '🍀', name: 'Lucky Strike', luckChance: 0.05, luckBonus: 3, unlockLevel: 20 },
+  goldBoost: { cost: 25000, owned: 0, multiplier: 1.7, perClick: 0, perSec: 0, emoji: '✨', name: 'Gold Boost', boostPercent: 0.1, unlockLevel: 30 },
 };
+
+// ============ LEVEL SYSTEM ============
+
+const LEVEL_THRESHOLDS = [
+  0,        // Level 1
+  100,      // Level 2
+  300,      // Level 3
+  600,      // Level 4
+  1000,     // Level 5
+  1500,     // Level 6
+  2500,     // Level 7
+  4000,     // Level 8
+  6000,     // Level 9
+  10000,    // Level 10
+  15000,    // Level 11
+  22000,    // Level 12
+  32000,    // Level 13
+  45000,    // Level 14
+  65000,    // Level 15
+  90000,    // Level 16
+  125000,   // Level 17
+  175000,   // Level 18
+  250000,   // Level 19
+  350000,   // Level 20
+  500000,   // Level 21
+  700000,   // Level 22
+  1000000,  // Level 23
+  1400000,  // Level 24
+  2000000,  // Level 25
+  2800000,  // Level 26
+  4000000,  // Level 27
+  5500000,  // Level 28
+  7500000,  // Level 29
+  10000000, // Level 30
+  15000000, // Level 31
+  25000000, // Level 32
+  40000000, // Level 33
+  60000000, // Level 34
+  100000000,// Level 35
+];
+
+const LEVEL_TITLES = [
+  'Novice Miner',      // 1
+  'Apprentice',        // 2
+  'Prospector',        // 3
+  'Digger',            // 4
+  'Excavator',         // 5
+  'Tunneler',          // 6
+  'Cave Explorer',     // 7
+  'Vein Hunter',       // 8
+  'Ore Seeker',        // 9
+  'Gold Finder',       // 10
+  'Rich Striker',      // 11
+  'Deep Miner',        // 12
+  'Shaft Master',      // 13
+  'Bonanza Hunter',    // 14
+  'Nugget King',       // 15
+  'Mine Foreman',      // 16
+  'Gold Baron',        // 17
+  'Treasure Hunter',   // 18
+  'Motherlode',        // 19
+  'Lucky Legend',      // 20
+  'Golden Touch',      // 21
+  'Midas Heir',        // 22
+  'Millionaire',       // 23
+  'Vault Master',      // 24
+  'Mine Tycoon',       // 25
+  'Gold Emperor',      // 26
+  'Diamond Hands',     // 27
+  'Legendary Miner',   // 28
+  'El Dorado',         // 29
+  'Golden God',        // 30
+  'Cosmic Miner',      // 31
+  'Galaxy Baron',      // 32
+  'Universe Tycoon',   // 33
+  'Infinity Miner',    // 34
+  'The One',           // 35
+];
+
+function calculateLevel(totalGoldEarned: number): number {
+  for (let i = LEVEL_THRESHOLDS.length - 1; i >= 0; i--) {
+    if (totalGoldEarned >= LEVEL_THRESHOLDS[i]) {
+      return i + 1;
+    }
+  }
+  return 1;
+}
+
+function getXPProgress(totalGoldEarned: number, currentLevel: number): { current: number; needed: number; percent: number } {
+  const currentThreshold = LEVEL_THRESHOLDS[currentLevel - 1] || 0;
+  const nextThreshold = LEVEL_THRESHOLDS[currentLevel] || LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1] * 2;
+  const current = totalGoldEarned - currentThreshold;
+  const needed = nextThreshold - currentThreshold;
+  const percent = Math.min((current / needed) * 100, 100);
+  return { current, needed, percent };
+}
 
 // ============ TYPES ============
 
@@ -1156,6 +1255,13 @@ export default function MinerGame() {
   const [appliedInstantGold, setAppliedInstantGold] = useState<Set<string>>(new Set());
   const [currentTime, setCurrentTime] = useState(Date.now());
   
+  // ============ LEVEL SYSTEM STATE ============
+  const [totalGoldEarned, setTotalGoldEarned] = useState(0);
+  const [playerLevel, setPlayerLevel] = useState(1);
+  const [unlockedUpgrades, setUnlockedUpgrades] = useState<Set<string>>(new Set(['pickaxe']));
+  const [notifications, setNotifications] = useState<Array<{id: number, type: 'level' | 'unlock', message: string, emoji: string, subtext?: string}>>([]);
+  const prevLevelRef = useRef(1);
+  
   // ============ ANTI-CHEAT STATE ============
   const antiCheatRef = useRef<AntiCheatState>({
     clickIntervals: [],
@@ -1206,6 +1312,35 @@ export default function MinerGame() {
       window.removeEventListener('mousemove', handleMouseMove);
     };
   }, []);
+  
+  // Reset anti-cheat penalty when player stops clicking for 2+ seconds (combo resets)
+  useEffect(() => {
+    const checkComboReset = setInterval(() => {
+      const now = Date.now();
+      const ac = antiCheatRef.current;
+      
+      // If more than 2 seconds since last click and player had a penalty
+      if (lastClickTime > 0 && now - lastClickTime > 2000 && ac.penaltyMultiplier < 1) {
+        // Reset anti-cheat state - give them a fresh start
+        ac.suspicionFlags = 0;
+        ac.isSuspicious = false;
+        ac.penaltyMultiplier = 1;
+        ac.clickIntervals = [];
+        ac.clickPositions = [];
+        ac.mouseMovements = 0;
+        setAntiCheatWarning(null);
+        
+        // Also reset combo visually
+        if (combo > 1) {
+          setCombo(1);
+        }
+        
+        console.log('🔄 Anti-cheat reset: Player took a break');
+      }
+    }, 500); // Check every 500ms
+    
+    return () => clearInterval(checkComboReset);
+  }, [lastClickTime, combo]);
   
   // UI state
   const [activeTab, setActiveTab] = useState<'game' | 'shop' | 'buy' | 'leaderboard' | 'stats'>('game');
@@ -1427,10 +1562,20 @@ export default function MinerGame() {
           if (Array.isArray(data.gameState.appliedInstantGold)) {
             setAppliedInstantGold(new Set(data.gameState.appliedInstantGold));
           }
+          // Level system state
+          if (typeof data.gameState.totalGoldEarned === 'number') setTotalGoldEarned(data.gameState.totalGoldEarned);
+          if (typeof data.gameState.playerLevel === 'number') {
+            setPlayerLevel(data.gameState.playerLevel);
+            prevLevelRef.current = data.gameState.playerLevel;
+          }
+          if (Array.isArray(data.gameState.unlockedUpgrades)) {
+            setUnlockedUpgrades(new Set(data.gameState.unlockedUpgrades));
+          }
           
           // Apply offline earnings (calculated server-side)
           if (data.offlineGold && data.offlineGold > 0) {
             setGold(prev => prev + data.offlineGold);
+            setTotalGoldEarned(prev => prev + data.offlineGold);
             console.log(`💰 Offline earnings: +${data.offlineGold} gold (${data.offlineMinutes} min)`);
             setOfflineEarnings({ gold: data.offlineGold, minutes: data.offlineMinutes });
             setTimeout(() => setOfflineEarnings(null), 5000);
@@ -1461,6 +1606,12 @@ export default function MinerGame() {
       setTotalClicks(0);
       setUpgrades(INITIAL_UPGRADES);
       setAppliedInstantGold(new Set());
+      // Reset level system state
+      setTotalGoldEarned(0);
+      setPlayerLevel(1);
+      prevLevelRef.current = 1;
+      setUnlockedUpgrades(new Set(['pickaxe']));
+      setNotifications([]);
     }
   }, [address]);
   
@@ -1498,6 +1649,10 @@ export default function MinerGame() {
         sessionStart: sessionStartTime.current,
         lastClickTimestamp: lastClickTime,
         clicksThisSession: totalClicks,
+        // Level system state
+        totalGoldEarned,
+        playerLevel,
+        unlockedUpgrades: Array.from(unlockedUpgrades),
       };
       
       const response = await fetch('/api/game', {
@@ -1539,7 +1694,7 @@ export default function MinerGame() {
     } finally {
       setIsSaving(false);
     }
-  }, [address, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, lastClickTime]);
+  }, [address, sessionId, isKicked, gold, totalClicks, upgrades, appliedInstantGold, lastClickTime, totalGoldEarned, playerLevel, unlockedUpgrades]);
   
   // Auto-save reminder (prompts user to save periodically)
   const [showSaveReminder, setShowSaveReminder] = useState(false);
@@ -1581,6 +1736,25 @@ export default function MinerGame() {
   
   const baseGoldPerSecond = useMemo(() => {
     return Object.values(upgrades).reduce((sum, u) => sum + u.owned * u.perSec, 0);
+  }, [upgrades]);
+  
+  // Calculate upgrade-based luck and boost bonuses
+  const upgradeLuckChance = useMemo(() => {
+    const luckyUpgrade = upgrades.luckyStrike as any;
+    // 5% chance per level, capped at 40%
+    return Math.min(luckyUpgrade.owned * 0.05, 0.40);
+  }, [upgrades]);
+  
+  const upgradeLuckMultiplier = useMemo(() => {
+    const luckyUpgrade = upgrades.luckyStrike as any;
+    // 3x base + 0.5x per additional level
+    return luckyUpgrade.owned > 0 ? 3 + (luckyUpgrade.owned - 1) * 0.5 : 1;
+  }, [upgrades]);
+  
+  const upgradeBoostMultiplier = useMemo(() => {
+    const boostUpgrade = upgrades.goldBoost as any;
+    // 10% boost per level (multiplicative: 1.1^n)
+    return Math.pow(1.1, boostUpgrade.owned);
   }, [upgrades]);
   
   // Final values from on-chain data
@@ -1916,16 +2090,17 @@ export default function MinerGame() {
     if (playerName) localStorage.setItem('basegold-player-name', playerName);
   }, [playerName]);
 
-  // Passive income (with global multiplier from Second Mine)
+  // Passive income (with global multiplier from Second Mine and upgrade boost)
   useEffect(() => {
     const interval = setInterval(() => {
       if (goldPerSecond > 0) {
-        const passiveEarnings = Math.floor(goldPerSecond * globalMultiplier);
+        const passiveEarnings = Math.floor(goldPerSecond * globalMultiplier * upgradeBoostMultiplier);
         setGold(prev => prev + passiveEarnings);
+        setTotalGoldEarned(prev => prev + passiveEarnings);
       }
     }, 1000);
     return () => clearInterval(interval);
-  }, [goldPerSecond, globalMultiplier]);
+  }, [goldPerSecond, globalMultiplier, upgradeBoostMultiplier]);
 
   // Auto-click from Golden Goat (Season 2)
   useEffect(() => {
@@ -1933,13 +2108,75 @@ export default function MinerGame() {
     
     const interval = setInterval(() => {
       // Auto-clicks happen at autoClickRate times per second
-      const autoEarned = Math.floor(goldPerClick * globalMultiplier);
+      const autoEarned = Math.floor(goldPerClick * globalMultiplier * upgradeBoostMultiplier);
       setGold(prev => prev + autoEarned);
+      setTotalGoldEarned(prev => prev + autoEarned);
       setTotalClicks(prev => prev + 1);
     }, 1000 / autoClickRate);
     
     return () => clearInterval(interval);
-  }, [autoClickRate, goldPerClick, globalMultiplier]);
+  }, [autoClickRate, goldPerClick, globalMultiplier, upgradeBoostMultiplier]);
+
+  // ============ LEVEL SYSTEM ============
+  
+  // Check for level ups and new unlocks
+  useEffect(() => {
+    const newLevel = calculateLevel(totalGoldEarned);
+    
+    // Level up detected
+    if (newLevel > prevLevelRef.current) {
+      setPlayerLevel(newLevel);
+      
+      // Show level up notification
+      const title = LEVEL_TITLES[newLevel - 1] || 'Master Miner';
+      const notifId = Date.now();
+      setNotifications(prev => [...prev, {
+        id: notifId,
+        type: 'level',
+        message: `Level ${newLevel}!`,
+        emoji: '🎉',
+        subtext: title
+      }]);
+      
+      // Play achievement sound
+      playSound('achievement', newLevel, true);
+      
+      // Check for newly unlocked upgrades
+      Object.entries(INITIAL_UPGRADES).forEach(([key, upgrade]) => {
+        if (upgrade.unlockLevel === newLevel && !unlockedUpgrades.has(key)) {
+          setUnlockedUpgrades(prev => new Set([...prev, key]));
+          
+          // Show unlock notification (slightly delayed)
+          setTimeout(() => {
+            const unlockId = Date.now();
+            setNotifications(prev => [...prev, {
+              id: unlockId,
+              type: 'unlock',
+              message: `${upgrade.name} Unlocked!`,
+              emoji: upgrade.emoji,
+              subtext: `New upgrade available`
+            }]);
+            playSound('upgrade', 1, true);
+          }, 1500);
+        }
+      });
+      
+      prevLevelRef.current = newLevel;
+      
+      // Auto-remove notification after 4 seconds
+      setTimeout(() => {
+        setNotifications(prev => prev.filter(n => n.id !== notifId));
+      }, 4000);
+    }
+    
+    // Also check for unlocks on initial load (in case upgrades were unlocked before but not tracked)
+    Object.entries(INITIAL_UPGRADES).forEach(([key, upgrade]) => {
+      if (upgrade.unlockLevel <= newLevel && !unlockedUpgrades.has(key)) {
+        setUnlockedUpgrades(prev => new Set([...prev, key]));
+      }
+    });
+    
+  }, [totalGoldEarned, unlockedUpgrades]);
 
   // Calculate total burned
   useEffect(() => {
@@ -2079,23 +2316,29 @@ export default function MinerGame() {
     
     // ============ CALCULATE EARNINGS ============
     
-    let newCombo = now - lastClickTime < 500 ? Math.min(combo + 1, maxCombo) : 1;
+    let newCombo = now - lastClickTime < 2000 ? Math.min(combo + 1, maxCombo) : 1;
     setCombo(newCombo);
     setLastClickTime(now);
     
-    // Check for lucky hit (Season 2)
-    const isLucky = luckyChance > 0 && Math.random() < luckyChance;
-    const luckyBonus = isLucky ? luckyMultiplier : 1;
+    // Check for lucky hit (combines on-chain and upgrade-based luck)
+    const totalLuckChance = Math.min(luckyChance + upgradeLuckChance, 0.5); // Cap at 50%
+    const totalLuckMultiplier = Math.max(luckyMultiplier, upgradeLuckMultiplier); // Use best multiplier
+    const isLucky = totalLuckChance > 0 && Math.random() < totalLuckChance;
+    const luckyBonus = isLucky ? totalLuckMultiplier : 1;
+    
+    // Apply upgrade boost multiplier (stacks with on-chain global multiplier)
+    const totalBoostMultiplier = globalMultiplier * upgradeBoostMultiplier;
     
     // Apply anti-cheat penalty
     const focusPenalty = ac.isTabFocused ? 1 : ANTI_CHEAT.UNFOCUSED_PENALTY;
     const cheatPenalty = ac.penaltyMultiplier;
     
     // Calculate earnings with all multipliers including anti-cheat penalties
-    const baseEarned = Math.floor(goldPerClick * clickMultiplier * newCombo * globalMultiplier * luckyBonus);
+    const baseEarned = Math.floor(goldPerClick * clickMultiplier * newCombo * totalBoostMultiplier * luckyBonus);
     const earned = Math.max(1, Math.floor(baseEarned * focusPenalty * cheatPenalty)); // Minimum 1 gold per click
     
     setGold(prev => prev + earned);
+    setTotalGoldEarned(prev => prev + earned);
     setTotalClicks(prev => prev + 1);
     
     // Play sounds (only if not penalized heavily)
@@ -2114,7 +2357,7 @@ export default function MinerGame() {
     const displayText = isLucky ? `🍀 +${formatNumber(earned)}` : `+${formatNumber(earned)}`;
     setFloatingTexts(prev => [...prev, { id, text: displayText, x, y }]);
     setTimeout(() => setFloatingTexts(prev => prev.filter(ft => ft.id !== id)), 1000);
-  }, [combo, lastClickTime, goldPerClick, clickMultiplier, maxCombo, soundEnabled, luckyChance, luckyMultiplier, globalMultiplier, showChallenge]);
+  }, [combo, lastClickTime, goldPerClick, clickMultiplier, maxCombo, soundEnabled, luckyChance, luckyMultiplier, globalMultiplier, showChallenge, upgradeLuckChance, upgradeLuckMultiplier, upgradeBoostMultiplier]);
 
   // Handle challenge completion
   const handleChallengeClick = useCallback(() => {
@@ -2513,9 +2756,64 @@ export default function MinerGame() {
       </div>
 
       <main className="max-w-lg mx-auto p-4 relative z-10">
+        {/* ============ NOTIFICATION POPUPS ============ */}
+        {notifications.map((notif, index) => (
+          <div
+            key={notif.id}
+            className={`fixed left-1/2 z-50 ${notif.type === 'level' ? 'bg-gradient-to-r from-yellow-500 via-amber-400 to-yellow-500' : 'bg-gradient-to-r from-purple-500 via-pink-500 to-purple-500'} text-white px-6 py-4 rounded-2xl shadow-2xl border-2 border-white/40`}
+            style={{ 
+              top: `${80 + index * 100}px`,
+              animation: 'notifSlideIn 0.5s ease-out forwards, notifPulse 1s ease-in-out infinite'
+            }}
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-4xl drop-shadow-lg">{notif.emoji}</span>
+              <div>
+                <div className="font-bold text-xl drop-shadow-md">{notif.message}</div>
+                {notif.subtext && <div className="text-sm opacity-90 drop-shadow-sm">{notif.subtext}</div>}
+              </div>
+            </div>
+          </div>
+        ))}
+
         {/* ============ GAME TAB ============ */}
         {activeTab === 'game' && (
           <>
+            {/* Level & XP Bar */}
+            <div className="mb-3 p-3 bg-gradient-to-r from-purple-900/30 to-indigo-900/30 rounded-xl border border-purple-500/30">
+              <div className="flex justify-between items-center mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">⭐</span>
+                  <div>
+                    <div className="text-sm font-bold text-purple-300">Level {playerLevel}</div>
+                    <div className="text-xs text-purple-400">{LEVEL_TITLES[playerLevel - 1] || 'Master Miner'}</div>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-gray-400">Total Earned</div>
+                  <div className="text-sm font-mono text-[#D4AF37]">{formatNumber(totalGoldEarned)}</div>
+                </div>
+              </div>
+              {/* XP Progress Bar */}
+              {(() => {
+                const xp = getXPProgress(totalGoldEarned, playerLevel);
+                return (
+                  <div className="relative">
+                    <div className="h-2 bg-black/50 rounded-full overflow-hidden">
+                      <div 
+                        className="h-full bg-gradient-to-r from-purple-500 to-pink-500 transition-all duration-500"
+                        style={{ width: `${xp.percent}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-gray-500 mt-1">
+                      <span>{formatNumber(xp.current)}</span>
+                      <span>{formatNumber(xp.needed)} to next level</span>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
             {/* Stats */}
             <div className="grid grid-cols-4 gap-1 mb-3 p-2 bg-gradient-to-b from-black/60 to-black/40 rounded-xl border border-white/10 backdrop-blur-sm">
               <div className="text-center p-2">
@@ -2668,6 +2966,30 @@ export default function MinerGame() {
               </div>
             )}
 
+            {/* Strategic Upgrade Bonuses */}
+            {(upgradeLuckChance > 0 || upgradeBoostMultiplier > 1) && (
+              <div className="mb-4 p-3 bg-gradient-to-b from-purple-500/10 to-purple-500/5 border border-purple-500/30 rounded-xl">
+                <div className="text-xs text-purple-400 font-semibold mb-2 text-center flex items-center justify-center gap-2">
+                  <span className="text-base">⚡</span>
+                  <span>Strategic Upgrades Active</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  {upgradeLuckChance > 0 && (
+                    <div className="bg-gradient-to-r from-green-500/20 to-emerald-500/20 rounded-lg p-2.5 text-center border border-green-500/30">
+                      <div className="text-emerald-400 font-bold text-base">🍀 {Math.round(upgradeLuckChance * 100)}%</div>
+                      <div className="text-emerald-300/80 text-[10px] uppercase tracking-wider">{upgradeLuckMultiplier.toFixed(1)}x Crits</div>
+                    </div>
+                  )}
+                  {upgradeBoostMultiplier > 1 && (
+                    <div className="bg-gradient-to-r from-amber-500/20 to-yellow-500/20 rounded-lg p-2.5 text-center border border-amber-500/30">
+                      <div className="text-yellow-400 font-bold text-base">✨ +{Math.round((upgradeBoostMultiplier - 1) * 100)}%</div>
+                      <div className="text-yellow-300/80 text-[10px] uppercase tracking-wider">All Gold</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Anti-Cheat Warning - Friendly yellow instead of harsh red */}
             {antiCheatWarning && (
               <div className="mb-4 p-3 bg-yellow-500/20 border border-yellow-500/50 rounded-xl text-center">
@@ -2754,25 +3076,70 @@ export default function MinerGame() {
             <h3 className="text-[#D4AF37] mb-2 text-sm font-semibold flex items-center gap-2">
               <span>⚡</span>
               <span>Upgrades</span>
+              <span className="text-[10px] text-gray-500 ml-auto">Lv.{playerLevel}</span>
             </h3>
             <div className="grid grid-cols-2 gap-2">
-              {Object.entries(upgrades).map(([key, upgrade]) => (
-                <button
-                  key={key}
-                  onClick={() => buyUpgrade(key as keyof typeof upgrades)}
-                  disabled={gold < upgrade.cost}
-                  className={`p-2.5 rounded-xl border transition-all text-left text-sm ${gold >= upgrade.cost ? 'bg-gradient-to-br from-[#D4AF37]/15 to-[#D4AF37]/5 border-[#D4AF37]/40 hover:border-[#D4AF37]/60 hover:shadow-lg hover:shadow-[#D4AF37]/10' : 'bg-white/5 border-white/10 opacity-50'}`}
-                >
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <span className="text-base">{upgrade.emoji}</span>
-                    <span className="text-xs font-semibold text-white">{upgrade.name}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-[#D4AF37] text-xs font-mono">{formatNumber(upgrade.cost)}</span>
-                    <span className="text-gray-400 text-[10px] bg-white/10 px-1.5 py-0.5 rounded">x{upgrade.owned}</span>
-                  </div>
-                </button>
-              ))}
+              {Object.entries(upgrades).map(([key, upgrade]) => {
+                const isLucky = key === 'luckyStrike';
+                const isBoost = key === 'goldBoost';
+                const isLocked = !unlockedUpgrades.has(key);
+                const unlockLevel = (INITIAL_UPGRADES as any)[key]?.unlockLevel || 1;
+                const bonusText = isLucky 
+                  ? `${Math.min(upgrade.owned * 5, 40)}% crit` 
+                  : isBoost 
+                  ? `+${Math.round((Math.pow(1.1, upgrade.owned) - 1) * 100)}%` 
+                  : upgrade.perClick > 0 
+                  ? `+${upgrade.perClick}/click` 
+                  : `+${upgrade.perSec}/sec`;
+                
+                // Locked upgrade display
+                if (isLocked) {
+                  return (
+                    <div
+                      key={key}
+                      className="p-2.5 rounded-xl border border-gray-700/50 bg-gray-900/50 text-left text-sm relative overflow-hidden"
+                    >
+                      <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10">
+                        <div className="text-center">
+                          <div className="text-2xl mb-1">🔒</div>
+                          <div className="text-xs text-gray-400">Level {unlockLevel}</div>
+                        </div>
+                      </div>
+                      <div className="opacity-30">
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <span className="text-base">{upgrade.emoji}</span>
+                          <span className="text-xs font-semibold text-white">{upgrade.name}</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-500 text-xs font-mono">???</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <button
+                    key={key}
+                    onClick={() => buyUpgrade(key as keyof typeof upgrades)}
+                    disabled={gold < upgrade.cost}
+                    className={`p-2.5 rounded-xl border transition-all text-left text-sm ${gold >= upgrade.cost ? 'bg-gradient-to-br from-[#D4AF37]/15 to-[#D4AF37]/5 border-[#D4AF37]/40 hover:border-[#D4AF37]/60 hover:shadow-lg hover:shadow-[#D4AF37]/10' : 'bg-white/5 border-white/10 opacity-50'} ${(isLucky || isBoost) ? 'border-purple-500/40' : ''}`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="text-base">{upgrade.emoji}</span>
+                      <span className="text-xs font-semibold text-white">{upgrade.name}</span>
+                      {(isLucky || isBoost) && <span className="text-[8px] text-purple-400 bg-purple-500/20 px-1 rounded">STRAT</span>}
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex flex-col">
+                        <span className="text-[#D4AF37] text-xs font-mono">{formatNumber(upgrade.cost)}</span>
+                        <span className={`text-[9px] ${(isLucky || isBoost) ? 'text-purple-300' : 'text-gray-500'}`}>{bonusText}</span>
+                      </div>
+                      <span className="text-gray-400 text-[10px] bg-white/10 px-1.5 py-0.5 rounded">x{upgrade.owned}</span>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
             
             {/* Mine Visualization */}
@@ -3381,6 +3748,17 @@ export default function MinerGame() {
         @keyframes floatUp {
           0% { opacity: 1; transform: translateY(0); }
           100% { opacity: 0; transform: translateY(-50px); }
+        }
+        
+        @keyframes notifSlideIn {
+          0% { opacity: 0; transform: translateX(-50%) translateY(-100px) scale(0.5); }
+          50% { opacity: 1; transform: translateX(-50%) translateY(10px) scale(1.1); }
+          100% { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
+        }
+        
+        @keyframes notifPulse {
+          0%, 100% { box-shadow: 0 0 20px rgba(212, 175, 55, 0.5); }
+          50% { box-shadow: 0 0 40px rgba(212, 175, 55, 0.8), 0 0 60px rgba(212, 175, 55, 0.4); }
         }
         
         @keyframes globalFloat {
