@@ -6,6 +6,10 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_KV_REST_API_TOKEN || process.env.KV_REST_API_TOKEN!,
 });
 
+// ============ SEASON CONFIG ============
+const CURRENT_SEASON = 's2'; // Change this to reset all player data
+const GAME_KEY_PREFIX = `game:${CURRENT_SEASON}:`; // e.g., game:s2:0x123...
+
 const MAX_OFFLINE_HOURS = 8;
 const SESSION_TIMEOUT = 60000;
 const MIN_SAVE_INTERVAL = 5000; // Minimum 5 seconds between saves
@@ -38,7 +42,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid address' }, { status: 400 });
     }
 
-    const gameState = await redis.get<GameState>(`game:${address}`);
+    const gameState = await redis.get<GameState>(`${GAME_KEY_PREFIX}${address}`);
     
     if (!gameState) {
       return NextResponse.json({ gameState: null, message: 'No saved game found' });
@@ -96,7 +100,7 @@ export async function POST(request: NextRequest) {
     // ============ ANTI-TAMPERING VALIDATION ============
     
     // Get previous save to compare
-    const previousSave = await redis.get<GameState>(`game:${normalizedAddress}`);
+    const previousSave = await redis.get<GameState>(`${GAME_KEY_PREFIX}${normalizedAddress}`);
     const now = Date.now();
     
     if (previousSave) {
@@ -123,7 +127,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Save game state
-    await redis.set(`game:${normalizedAddress}`, {
+    await redis.set(`${GAME_KEY_PREFIX}${normalizedAddress}`, {
       ...gameState,
       lastSaved: now,
     });
