@@ -16,6 +16,9 @@ const redis = new Redis({
 const CURRENT_SEASON = 's2'; // Must match game/route.ts
 const GAME_KEY_PREFIX = `game:${CURRENT_SEASON}:`; // e.g., game:s2:0x123...
 
+// Only count burns AFTER this timestamp for Season 2
+const SEASON_2_START_TIMESTAMP = 1769040000000; // Jan 22, 2026 - must match page.tsx
+
 const INSTANT_BURN = '0xF9dc5A103C5B09bfe71cF1Badcce362827b34BFE' as `0x${string}`;
 const MIN_BURNS_FOR_LEADERBOARD = 1;
 const LEADERBOARD_KEY = `leaderboard:points:${CURRENT_SEASON}`; // Season 2 leaderboard
@@ -139,14 +142,22 @@ async function getOnChainBurnData(address: string): Promise<{ burnCount: number;
     });
 
     let totalBurned = 0;
+    let seasonBurnCount = 0;
+    
     logs.forEach((log: any) => {
       const bgBurned = Number(formatUnits(log.args.bgBurned || 0n, 18));
-      totalBurned += bgBurned;
+      const timestamp = Number(log.args.timestamp || 0) * 1000;
+      
+      // SEASON 2: Only count burns AFTER season start
+      if (timestamp >= SEASON_2_START_TIMESTAMP) {
+        totalBurned += bgBurned;
+        seasonBurnCount++;
+      }
     });
 
-    console.log('On-chain burn data:', { burnCount: logs.length, totalBurned });
+    console.log('On-chain burn data (Season 2):', { burnCount: seasonBurnCount, totalBurned });
     return {
-      burnCount: logs.length,
+      burnCount: seasonBurnCount,
       totalBurned,
     };
   } catch (error) {
