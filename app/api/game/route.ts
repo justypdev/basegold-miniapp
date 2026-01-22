@@ -7,7 +7,7 @@ const redis = new Redis({
 });
 
 // ============ SEASON CONFIG ============
-const CURRENT_SEASON = 's2'; // Change this to reset all player data
+const CURRENT_SEASON = 's2v2'; // Change this to reset all player data - bumped to v2 for clean reset
 const GAME_KEY_PREFIX = `game:${CURRENT_SEASON}:`; // e.g., game:s2:0x123...
 
 const MAX_OFFLINE_HOURS = 8;

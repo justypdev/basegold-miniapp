@@ -13,7 +13,7 @@ const redis = new Redis({
 // ============ CONSTANTS ============
 
 // ============ SEASON CONFIG ============
-const CURRENT_SEASON = 's2'; // Must match game/route.ts
+const CURRENT_SEASON = 's2v2'; // Must match game/route.ts - bumped to v2 for clean reset
 const GAME_KEY_PREFIX = `game:${CURRENT_SEASON}:`; // e.g., game:s2:0x123...
 
 // Only count burns AFTER this timestamp for Season 2
