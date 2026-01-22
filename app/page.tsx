@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { sdk } from '@farcaster/frame-sdk';
 import { useAppKit } from '@reown/appkit/react';
-import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage, useSendTransaction, useWaitForTransactionReceipt } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useWatchContractEvent, usePublicClient, useSignMessage, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 
 import { encodeFunctionData, parseUnits, formatUnits, parseEther, parseAbiItem, createPublicClient, http, fallback } from 'viem';
 import { base } from 'wagmi/chains';
@@ -1197,15 +1197,15 @@ export default function MinerGame() {
   const publicClient = usePublicClient();
   const { signMessageAsync } = useSignMessage();
 
-  // Transaction hook for shop purchases (cleaner than OnchainKit)
+  // Transaction hook for shop purchases - useWriteContract is the correct way for contract calls
   const { 
-    sendTransaction, 
+    writeContract, 
     data: txHash, 
     isPending: isTxPending, 
     isError: isTxError,
     error: txErrorData,
     reset: resetTx 
-  } = useSendTransaction();
+  } = useWriteContract();
   
   const { 
     isLoading: isConfirming, 
@@ -3429,16 +3429,13 @@ export default function MinerGame() {
                         {!isTxPending && !isConfirming && (
                           <button
                             onClick={() => {
-                              // Send transaction with reasonable gas limit
-                              sendTransaction({
-                                to: INSTANT_BURN,
+                              // Use writeContract for contract calls (proper wagmi pattern)
+                              writeContract({
+                                address: INSTANT_BURN,
+                                abi: INSTANT_BURN_ABI,
+                                functionName: 'buyAndBurn',
+                                args: [],
                                 value: parseEther(item.priceETH),
-                                data: encodeFunctionData({
-                                  abi: INSTANT_BURN_ABI,
-                                  functionName: 'buyAndBurn',
-                                  args: [],
-                                }),
-                                gas: BigInt(150000), // Fixed gas limit to prevent overestimation
                               });
                             }}
                             disabled={!ethBalance || parseFloat(ethBalance.formatted) < parseFloat(item.priceETH)}

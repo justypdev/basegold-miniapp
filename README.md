@@ -1,193 +1,162 @@
-# ⛏️ BaseGold Miner - Base Mini App
+# ⛏️ BaseGold Miner - Season 2
 
-A play-to-burn clicker game deployed as a Base Mini App. Mine gold, buy upgrades with in-game currency, and purchase premium items with USDC - 100% of premium revenue goes to the $BG burn fund!
+**The Official Play-to-Burn Game for BaseGold ($BG)**
 
-## 🎮 Features
+Mine gold, climb the leaderboards, and burn $BG to unlock exclusive rewards. Season 2 introduces new shop items, visual effects, and enhanced anti-cheat protection!
 
-### Core Game
-- **Click Mining**: Tap the gold coin to mine
-- **Combo System**: Fast clicks build combos up to 10x (15x with Golden Crown)
-- **Passive Income**: Hire miners and buy equipment for gold/second
-- **6 Upgrade Types**: Pickaxe, Miner, Drill, Excavator, Dynamite, Gold Mine
+## 🏆 Season 2 Highlights
 
-### 💎 Premium Shop (USDC Payments)
+### 🔥 Burn-to-Play Mechanics
+- Every shop purchase burns $BG tokens via the InstantBurn contract
+- Minimum 1 burn required to submit leaderboard scores
+- On-chain verification ensures fair competition
+
+### 🆕 New Shop Items
 | Item | Price | Effect |
 |------|-------|--------|
-| ⚡ 2x Power Boost | $0.50 | Double click power for 10 minutes |
-| ⏰ Time Warp | $1.00 | Instantly collect 1 hour of passive gold |
-| 💎 Diamond Pickaxe | $2.00 | Permanent +10 gold per click |
-| 🤖 Auto-Miner Bot | $5.00 | Permanent +100 gold per second |
-| 👑 Golden Crown | $3.00 | Cosmetic + 15x max combo |
-| 🔥 Burn Booster | $1.00 | 100% goes directly to burn fund |
+| ⚡ 5x MEGA BOOST | ~$4 | 5x ALL earnings for 5 minutes |
+| 🏔️ Second Mine | ~$15 | PERMANENT 2x multiplier on all earnings |
+| 🐐 Golden Goat | ~$10 | 25x max combo + auto-click |
+| 🍀 Lucky Nugget | ~$6 | 15% chance for 10x gold per click |
+| ⏰ Time Warp PRO | ~$7 | Instantly collect 8 hours of passive gold |
+| 💎 Diamond Mine | ~$12 | Permanent +500 gold per second |
+| 🔥 Inferno Burn | ~$5.50 | +25/click, +100/sec, massive BG burn |
 
-**All premium revenue is used to buy and burn $BG tokens!**
+### 📊 Dual Leaderboards
+- **⛏️ Miners Leaderboard** - Compete for highest gold mined
+- **🔥 Burners Leaderboard** - Track total $BG burned
 
-## 🚀 Deployment Guide
+### 🎮 Enhanced Gameplay
+- **On-chain verification** - All scores verified via wallet signature
+- **Anti-cheat protection** - Fair play for everyone
+- **Session management** - One device per wallet
+- **Cloud saves** - Progress saved to server automatically
+- **Offline earnings** - Earn gold while away (up to 8 hours)
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) 18+
-- [Vercel Account](https://vercel.com/)
-- [Coinbase Developer Platform Account](https://portal.cdp.coinbase.com/)
-- Farcaster/Base App account
+## 🎯 How to Play
 
-### Step 1: Deploy to Vercel
+1. **Connect Wallet** - Use any Base-compatible wallet
+2. **Start Mining** - Click the gold coin to mine
+3. **Build Combos** - Fast clicks = higher multipliers (up to 15x!)
+4. **Buy Upgrades** - Spend gold on permanent improvements
+5. **Shop Premium Items** - USDC purchases unlock powerful effects
+6. **Burn $BG** - Required to submit scores (minimum 1 burn)
+7. **Compete** - Climb the leaderboard for season rewards!
 
-1. Push this code to a GitHub repository
-2. Go to [Vercel](https://vercel.com/new) and import the repository
-3. Add environment variables:
-   - `NEXT_PUBLIC_URL` = Your Vercel URL (e.g., `https://basegold-miner.vercel.app`)
-   - `NEXT_PUBLIC_CDP_API_KEY` = Your CDP API key
+## 💰 Burn Mechanics
 
-### Step 2: Update Treasury Address
+All shop purchases go through the InstantBurn contract:
+1. User pays ETH for shop item
+2. Contract swaps ETH → $BG on DEX
+3. $BG is burned immediately
+4. User receives in-game effect after on-chain confirmation
 
-In `app/page.tsx`, update the `TREASURY_ADDRESS` constant to your wallet address:
+This creates constant deflationary pressure on $BG supply.
 
-```typescript
-const TREASURY_ADDRESS = '0xYourWalletAddressHere';
-```
+## 🔧 Technical Stack
 
-This is where USDC payments will be sent. Use a wallet you control for the burn fund.
-
-### Step 3: Sign the Manifest
-
-1. Go to [base.dev/preview](https://base.dev/preview?tab=account)
-2. Enter your deployed URL
-3. Click "Verify" and sign with your wallet
-4. Copy the `accountAssociation` object
-5. Update `app/.well-known/farcaster.json/route.ts` with the signed values:
-
-```typescript
-accountAssociation: {
-  header: "eyJ...",
-  payload: "eyJ...",
-  signature: "MHg..."
-}
-```
-
-6. Redeploy to Vercel
-
-### Step 4: Add App Assets
-
-Upload these images to your `/public` folder:
-
-| File | Size | Description |
-|------|------|-------------|
-| `logo.png` | 1024×1024 | App icon |
-| `splash.png` | 200×200 | Loading splash |
-| `hero.png` | 1200×630 | Hero/OG image |
-| `og-image.png` | 1200×630 | Social share image |
-| `screenshot1.png` | 1284×2778 | App screenshot |
-| `screenshot2.png` | 1284×2778 | App screenshot |
-| `screenshot3.png` | 1284×2778 | App screenshot |
-
-### Step 5: Preview & Publish
-
-1. Go to [base.dev/preview](https://base.dev/preview)
-2. Enter your URL and verify everything looks correct
-3. Open the Base App and create a post with your app URL
-4. Your Mini App is now live! 🎉
-
-## 💰 Revenue & Burns
-
-### How the Burn Mechanism Works
-
-1. User purchases a premium item with USDC
-2. USDC is sent to the treasury wallet
-3. Treasury accumulates until threshold ($50 recommended)
-4. Manual or automated buyback of $BG from DEX
-5. Purchased $BG is sent to burn address
-
-### Setting Up Automated Burns (Optional)
-
-You can automate the burn process using:
-- A smart contract that swaps and burns on deposit
-- A Cloudflare Worker that monitors the treasury and executes burns
-- Manual periodic burns (simplest approach)
-
-## 🔧 Local Development
-
-```bash
-# Install dependencies
-npm install
-
-# Create .env.local from template
-cp .env.example .env.local
-
-# Start dev server
-npm run dev
-```
-
-Visit `http://localhost:3000` to test locally.
+- **Framework**: Next.js 14 (App Router)
+- **Blockchain**: Base Network (Ethereum L2)
+- **Wallet**: OnchainKit + Wagmi
+- **Database**: Upstash Redis (serverless)
+- **Hosting**: Vercel
+- **Payments**: USDC via Base
 
 ## 📁 Project Structure
 
 ```
 basegold-miniapp/
 ├── app/
-│   ├── .well-known/
-│   │   └── farcaster.json/
-│   │       └── route.ts      # Manifest endpoint
-│   ├── globals.css           # Global styles
-│   ├── layout.tsx            # Root layout with metadata
-│   ├── page.tsx              # Main game component
-│   └── providers.tsx         # Wagmi/OnchainKit providers
-├── public/                   # Static assets (add your images here)
-├── minikit.config.ts         # MiniKit configuration
-├── package.json
-├── tailwind.config.js
-└── tsconfig.json
+│   ├── api/
+│   │   ├── game/           # Save/load game state
+│   │   ├── leaderboard/    # Score submission & rankings
+│   │   ├── session/        # Anti-cheat session management
+│   │   └── onramp/         # Coinbase onramp integration
+│   ├── globals.css         # Animations & effects
+│   ├── layout.tsx          # Root layout
+│   ├── page.tsx            # Main game (2000+ lines!)
+│   └── providers.tsx       # Wallet providers
+├── minikit.config.ts       # Base MiniKit config
+└── package.json
 ```
 
-## 🔐 Security Notes
+## 🚀 Deployment
 
-- **Treasury Wallet**: Use a dedicated wallet for receiving payments
-- **Never expose private keys**: All signing happens client-side
-- **USDC Contract**: Uses official Base USDC (`0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`)
-- **Game state is local**: Stored in localStorage, not on-chain
+### Environment Variables
 
-## 📊 Tracking Revenue
+```env
+# Vercel KV (Upstash Redis)
+KV_REST_API_URL=
+KV_REST_API_TOKEN=
 
-To track premium purchases:
-1. Monitor USDC transfers to your treasury on BaseScan
-2. Set up alerts via wallet tracking services
-3. Consider adding a backend webhook for purchase events
+# Or direct Upstash
+UPSTASH_REDIS_REST_KV_REST_API_URL=
+UPSTASH_REDIS_REST_KV_REST_API_TOKEN=
 
-## 🛠️ Customization
+# App URL
+NEXT_PUBLIC_URL=https://your-app.vercel.app
 
-### Adding New Premium Items
+# Coinbase Developer Platform
+NEXT_PUBLIC_CDP_API_KEY=
+CDP_API_KEY_PRIVATE_KEY=
+```
 
-In `app/page.tsx`, add to the `SHOP_ITEMS` array:
+### Deploy to Vercel
+
+```bash
+# Clone repository
+git clone https://github.com/basegold/basegold-miniapp.git
+
+# Install dependencies
+npm install
+
+# Deploy
+vercel --prod
+```
+
+## 🔐 Security Features
+
+- **Wallet Signature Verification** - EIP-191 + EIP-1271 (smart wallets)
+- **On-chain Burn Verification** - Scores require verified burns
+- **Session Locking** - One active session per wallet
+- **Rate Limiting** - Prevents save spam
+- **Gold Cap Validation** - Detects impossible scores
+- **Server-side State** - Client can't tamper with saved progress
+
+## 🔄 Season Management
+
+To start a new season, update `CURRENT_SEASON` in both API routes:
 
 ```typescript
-{
-  id: 'new_item',
-  name: '🌟 New Item',
-  description: 'Description here',
-  priceUSDC: '2.50',
-  emoji: '🌟',
-  effect: { type: 'permanent_click', amount: 5 }
-}
+// app/api/game/route.ts
+const CURRENT_SEASON = 's3'; // Change to reset
+
+// app/api/leaderboard/route.ts  
+const CURRENT_SEASON = 's3'; // Must match!
 ```
 
-Effect types:
-- `boost` - Temporary multiplier
-- `instant_gold` - Instant gold based on passive income
-- `permanent_click` - Permanent per-click bonus
-- `permanent_passive` - Permanent per-second bonus
-- `cosmetic` - Visual effects + max combo increase
-- `burn_contribution` - Pure burn donation
+This creates fresh Redis keys while preserving historical data.
 
-### Changing Upgrade Costs/Values
+## 📊 Key Contracts
 
-Modify the `INITIAL_UPGRADES` object in `app/page.tsx`.
-
-## 📝 License
-
-MIT - Feel free to fork and customize for your own project!
+| Contract | Address |
+|----------|---------|
+| $BG Token | `0x8fe815417913a93ea99049fc0718ee1647a3f702` |
+| Instant Burn | `0xF9dc5A103C5B09bfe71cF1Badcce362827b34BFE` |
+| USDC (Base) | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
 
 ## 🔗 Links
 
-- [BaseGold Website](https://basegold.io)
-- [Base Mini Apps Docs](https://docs.base.org/mini-apps)
-- [OnchainKit Docs](https://docs.base.org/onchainkit)
-- [MiniKit Docs](https://docs.base.org/builderkits/minikit)
+- **Website**: [basegold.io](https://basegold.io)
+- **Play Now**: [basegold-miniapp.vercel.app](https://basegold-miniapp.vercel.app)
+- **Twitter/X**: [@BaseGold_](https://x.com/BaseGold_)
+- **Telegram**: [BaseGold Community](https://t.me/basegold)
+- **DexScreener**: [BaseGold Chart](https://dexscreener.com/base/0x8fe815417913a93ea99049fc0718ee1647a3f702)
+
+## 📝 License
+
+MIT - Built for the BaseGold community 🏆
+
+---
+
+**You Only Need One** ⛏️💛
