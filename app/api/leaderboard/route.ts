@@ -12,9 +12,13 @@ const redis = new Redis({
 
 // ============ CONSTANTS ============
 
+// ============ SEASON CONFIG ============
+const CURRENT_SEASON = 's2'; // Must match game/route.ts
+const GAME_KEY_PREFIX = `game:${CURRENT_SEASON}:`; // e.g., game:s2:0x123...
+
 const INSTANT_BURN = '0xF9dc5A103C5B09bfe71cF1Badcce362827b34BFE' as `0x${string}`;
 const MIN_BURNS_FOR_LEADERBOARD = 1;
-const LEADERBOARD_KEY = 'leaderboard:points:s2'; // Season 2 leaderboard
+const LEADERBOARD_KEY = `leaderboard:points:${CURRENT_SEASON}`; // Season 2 leaderboard
 const MAX_LEADERBOARD_SIZE = 100;
 const SESSION_TIMEOUT = 60000;
 
@@ -24,7 +28,7 @@ const SESSION_TIMEOUT = 60000;
 // This helps detect obviously tampered scores
 const MAX_GOLD_PER_SECOND_THEORETICAL = 50000; // Very generous cap
 const MAX_GOLD_PER_CLICK_THEORETICAL = 10000;
-const MAX_CLICKS_PER_SECOND = 20;
+const MAX_CLICKS_PER_SECOND = 15;
 
 function validateGoldPlausibility(
   gold: number, 
@@ -259,7 +263,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const savedGame = await redis.get<any>(`game:${normalizedAddress}`);
+    const savedGame = await redis.get<any>(`${GAME_KEY_PREFIX}${normalizedAddress}`);
     
     // Use saved game data if available (more trusted than client-submitted)
     const finalGold = savedGame ? savedGame.gold : gold;
