@@ -186,6 +186,11 @@ const MIN_BURNS_FOR_LEADERBOARD = 1;
 const VERIFICATION_POLL_INTERVAL = 2000; // Poll every 2 seconds
 const VERIFICATION_MAX_ATTEMPTS = 30; // Max 60 seconds of polling
 
+// ============ SEASON 2 CONFIG ============
+// Only count purchases/burns AFTER this timestamp for Season 2
+// Set to Jan 22, 2026 00:00:00 UTC - change this to start a new season
+const SEASON_2_START_TIMESTAMP = 1769040000000;
+
 // ============ ANTI-CHEAT SECURITY SYSTEM ============
 
 const ANTI_CHEAT = {
@@ -1808,6 +1813,7 @@ export default function MinerGame() {
 
       const purchases: OnChainPurchase[] = [];
       let totalBurned = 0;
+      let seasonBurnCount = 0;
 
       logs.forEach((log: any) => {
         const ethAmount = formatUnits(log.args.ethAmount || 0n, 18);
@@ -1815,7 +1821,13 @@ export default function MinerGame() {
         const timestamp = Number(log.args.timestamp || 0) * 1000;
         const txHash = log.transactionHash;
         
+        // SEASON 2: Only count burns/purchases AFTER season start
+        if (timestamp < SEASON_2_START_TIMESTAMP) {
+          return; // Skip pre-Season 2 purchases
+        }
+        
         totalBurned += bgBurned;
+        seasonBurnCount++;
 
         const matchingItem = matchEthToItem(ethAmount);
         if (matchingItem) {
@@ -1830,7 +1842,7 @@ export default function MinerGame() {
       });
 
       setVerifiedPurchases(purchases);
-      setUserBurnCount(logs.length);
+      setUserBurnCount(seasonBurnCount); // Only Season 2 burns count
       setUserBurnAmount(totalBurned);
       setLoadingVerification(false);
       
@@ -1952,6 +1964,12 @@ export default function MinerGame() {
       logs.forEach((log: any) => {
         const buyer = log.args.buyer as string;
         const bgBurned = Number(formatUnits(log.args.bgBurned || 0n, 18));
+        const timestamp = Number(log.args.timestamp || 0) * 1000;
+        
+        // SEASON 2: Only count burns AFTER season start
+        if (timestamp < SEASON_2_START_TIMESTAMP) {
+          return; // Skip pre-Season 2 burns
+        }
         
         if (!burnsByAddress[buyer]) {
           burnsByAddress[buyer] = { totalBurned: 0, burnCount: 0 };
