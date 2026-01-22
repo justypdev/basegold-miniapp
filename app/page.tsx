@@ -288,6 +288,16 @@ function BuyEthButton({ address, className }: { address?: string; className?: st
     // Fallback URL for Base ETH
     const fallbackUrl = `https://pay.coinbase.com/buy/select-asset?addresses=${encodeURIComponent(JSON.stringify({[address]: ["base"]}))}&assets=${encodeURIComponent(JSON.stringify(["ETH"]))}`;
     
+    // Detect mobile (iOS Safari blocks window.open after async calls)
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    
+    // On mobile: open window FIRST (synchronously) to avoid popup blocker
+    // Safari blocks window.open() if called after an async operation
+    let newWindow: Window | null = null;
+    if (!isMobile) {
+      newWindow = window.open('about:blank', '_blank');
+    }
+    
     try {
       // Call our API to get a Coinbase session token
       const res = await fetch('/api/onramp', {
@@ -300,12 +310,28 @@ function BuyEthButton({ address, className }: { address?: string; className?: st
       
       // Use the URL from API response (either session token URL or fallback)
       const targetUrl = data.url || fallbackUrl;
-      window.open(targetUrl, '_blank');
+      
+      if (isMobile) {
+        // On mobile, navigate in same tab (better UX anyway)
+        window.location.href = targetUrl;
+      } else if (newWindow) {
+        // On desktop, update the pre-opened window
+        newWindow.location.href = targetUrl;
+      } else {
+        // Fallback if window didn't open
+        window.open(targetUrl, '_blank');
+      }
       
     } catch (err) {
       console.error('Onramp error:', err);
       // On error, use fallback URL
-      window.open(fallbackUrl, '_blank');
+      if (isMobile) {
+        window.location.href = fallbackUrl;
+      } else if (newWindow) {
+        newWindow.location.href = fallbackUrl;
+      } else {
+        window.open(fallbackUrl, '_blank');
+      }
     } finally {
       setLoading(false);
     }
