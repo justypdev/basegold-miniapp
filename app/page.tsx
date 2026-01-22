@@ -538,41 +538,41 @@ const INITIAL_UPGRADES = {
 // ============ LEVEL SYSTEM ============
 
 const LEVEL_THRESHOLDS = [
-  0,        // Level 1
-  100,      // Level 2
-  300,      // Level 3
-  600,      // Level 4
-  1000,     // Level 5
-  1500,     // Level 6
-  2500,     // Level 7
-  4000,     // Level 8
-  6000,     // Level 9
-  10000,    // Level 10
-  15000,    // Level 11
-  22000,    // Level 12
-  32000,    // Level 13
-  45000,    // Level 14
-  65000,    // Level 15
-  90000,    // Level 16
-  125000,   // Level 17
-  175000,   // Level 18
-  250000,   // Level 19
-  350000,   // Level 20
-  500000,   // Level 21
-  700000,   // Level 22
-  1000000,  // Level 23
-  1400000,  // Level 24
-  2000000,  // Level 25
-  2800000,  // Level 26
-  4000000,  // Level 27
-  5500000,  // Level 28
-  7500000,  // Level 29
-  10000000, // Level 30
-  15000000, // Level 31
-  25000000, // Level 32
-  40000000, // Level 33
-  60000000, // Level 34
-  100000000,// Level 35
+  0,           // Level 1 - Start
+  10000,       // Level 2 - Hire Miner unlocks (10K)
+  25000,       // Level 3
+  50000,       // Level 4
+  100000,      // Level 5 - Gold Drill unlocks (100K)
+  200000,      // Level 6
+  350000,      // Level 7
+  500000,      // Level 8
+  750000,      // Level 9
+  1000000,     // Level 10 - Excavator unlocks (1M)
+  1500000,     // Level 11
+  2000000,     // Level 12
+  3000000,     // Level 13
+  4000000,     // Level 14
+  5000000,     // Level 15 - Dynamite unlocks (5M)
+  7500000,     // Level 16
+  10000000,    // Level 17
+  15000000,    // Level 18
+  20000000,    // Level 19
+  25000000,    // Level 20 - Lucky Strike unlocks (25M)
+  35000000,    // Level 21
+  50000000,    // Level 22
+  65000000,    // Level 23
+  80000000,    // Level 24
+  100000000,   // Level 25 - Gold Mine unlocks (100M)
+  150000000,   // Level 26
+  200000000,   // Level 27
+  300000000,   // Level 28
+  400000000,   // Level 29
+  500000000,   // Level 30 - Gold Boost unlocks (500M)
+  750000000,   // Level 31
+  1000000000,  // Level 32 (1B)
+  2000000000,  // Level 33 (2B)
+  5000000000,  // Level 34 (5B)
+  10000000000, // Level 35 (10B)
 ];
 
 const LEVEL_TITLES = [
@@ -2136,14 +2136,44 @@ export default function MinerGame() {
 
   // ============ LEVEL SYSTEM ============
   
+  // Track the gold amount when we last checked - only notify on NEW earnings
+  const lastCheckedGoldRef = useRef(0);
+  const isFirstRenderRef = useRef(true);
+  
   // Check for level ups and new unlocks
   useEffect(() => {
     const newLevel = calculateLevel(totalGoldEarned);
     
-    // Level up detected
-    if (newLevel > prevLevelRef.current) {
+    // Always silently sync unlocked upgrades based on current level
+    Object.entries(INITIAL_UPGRADES).forEach(([key, upgrade]) => {
+      if (upgrade.unlockLevel <= newLevel && !unlockedUpgrades.has(key)) {
+        setUnlockedUpgrades(prev => new Set([...prev, key]));
+      }
+    });
+    
+    // Always sync the displayed level
+    if (newLevel !== playerLevel) {
       setPlayerLevel(newLevel);
-      
+    }
+    
+    // CRITICAL: Only show notifications if gold increased from GAMEPLAY (not loading)
+    // Skip if this is the first render or if gold didn't increase
+    const goldIncreased = totalGoldEarned > lastCheckedGoldRef.current;
+    const isInitialLoad = isFirstRenderRef.current || lastCheckedGoldRef.current === 0;
+    
+    if (isInitialLoad) {
+      // First load or loading saved data - just sync state, no notifications
+      lastCheckedGoldRef.current = totalGoldEarned;
+      prevLevelRef.current = newLevel;
+      isFirstRenderRef.current = false;
+      return;
+    }
+    
+    // Update last checked gold
+    lastCheckedGoldRef.current = totalGoldEarned;
+    
+    // Only show notification if we actually leveled up from gameplay
+    if (goldIncreased && newLevel > prevLevelRef.current) {
       // Show level up notification
       const title = LEVEL_TITLES[newLevel - 1] || 'Master Miner';
       const notifId = Date.now();
@@ -2158,11 +2188,9 @@ export default function MinerGame() {
       // Play achievement sound
       playSound('achievement', newLevel, true);
       
-      // Check for newly unlocked upgrades
+      // Check for newly unlocked upgrades at this exact level
       Object.entries(INITIAL_UPGRADES).forEach(([key, upgrade]) => {
-        if (upgrade.unlockLevel === newLevel && !unlockedUpgrades.has(key)) {
-          setUnlockedUpgrades(prev => new Set([...prev, key]));
-          
+        if (upgrade.unlockLevel === newLevel) {
           // Show unlock notification (slightly delayed)
           setTimeout(() => {
             const unlockId = Date.now();
@@ -2174,26 +2202,27 @@ export default function MinerGame() {
               subtext: `New upgrade available`
             }]);
             playSound('upgrade', 1, true);
-          }, 1500);
+            
+            // Auto-remove unlock notification
+            setTimeout(() => {
+              setNotifications(prev => prev.filter(n => n.id !== unlockId));
+            }, 3000);
+          }, 1000);
         }
       });
       
       prevLevelRef.current = newLevel;
       
-      // Auto-remove notification after 4 seconds
+      // Auto-remove level notification after 3 seconds
       setTimeout(() => {
         setNotifications(prev => prev.filter(n => n.id !== notifId));
-      }, 4000);
+      }, 3000);
+    } else {
+      // Just update the ref without notification
+      prevLevelRef.current = newLevel;
     }
     
-    // Also check for unlocks on initial load (in case upgrades were unlocked before but not tracked)
-    Object.entries(INITIAL_UPGRADES).forEach(([key, upgrade]) => {
-      if (upgrade.unlockLevel <= newLevel && !unlockedUpgrades.has(key)) {
-        setUnlockedUpgrades(prev => new Set([...prev, key]));
-      }
-    });
-    
-  }, [totalGoldEarned, unlockedUpgrades]);
+  }, [totalGoldEarned, playerLevel, unlockedUpgrades]);
 
   // Calculate total burned
   useEffect(() => {
