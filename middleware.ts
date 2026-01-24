@@ -11,6 +11,7 @@ const ALLOWED_ORIGINS = [
   'https://www.basegold.io',
   'https://miner.basegold.io',
   'https://goldvein.basegold.io',
+  'https://basegold-miniapp.vercel.app',
   // Add localhost for development
   'http://localhost:3000',
   'http://localhost:3001',
@@ -18,9 +19,12 @@ const ALLOWED_ORIGINS = [
 
 // Check if origin is allowed
 function isAllowedOrigin(origin: string | null): boolean {
-  if (!origin) return false;
+  // Same-origin requests don't have an origin header - allow these
+  if (!origin) return true;
   return ALLOWED_ORIGINS.some(allowed => 
-    origin === allowed || origin.endsWith('.basegold.io')
+    origin === allowed || 
+    origin.endsWith('.basegold.io') ||
+    origin.endsWith('.vercel.app') // Allow Vercel preview deployments
   );
 }
 

@@ -12,6 +12,7 @@ const nextConfig = {
   
   // ============ SECURITY HEADERS ============
   // Addresses: CSP, Clickjacking (X-Frame-Options), and other OWASP Top 10 issues
+  // Reown/WalletConnect CSP: https://docs.reown.com/advanced/security/content-security-policy
   async headers() {
     return [
       {
@@ -27,16 +28,51 @@ const nextConfig = {
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdnjs.cloudflare.com",
               // Styles: self + inline (needed for Tailwind/styled-jsx)
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              // Images: self + data URIs + blockchain/crypto image sources
-              "img-src 'self' data: blob: https: https://*.walletconnect.com https://*.coinbase.com",
-              // Fonts: self + Google Fonts
-              "font-src 'self' https://fonts.gstatic.com",
-              // Connect: API endpoints, RPC nodes, WalletConnect, etc.
-              "connect-src 'self' https://*.upstash.io https://mainnet.base.org https://base.llamarpc.com https://base-mainnet.public.blastapi.io https://1rpc.io https://*.walletconnect.com wss://*.walletconnect.com https://*.coinbase.com https://api.developer.coinbase.com https://pay.coinbase.com https://*.basegold.io",
+              // Images: self + data URIs + blockchain/crypto image sources (per Reown docs)
+              "img-src 'self' data: blob: https: https://walletconnect.org https://walletconnect.com https://secure.walletconnect.com https://secure.walletconnect.org https://tokens-data.1inch.io https://tokens.1inch.io https://ipfs.io https://cdn.zerion.io",
+              // Fonts: self + Google Fonts + Reown fonts
+              "font-src 'self' https://fonts.gstatic.com https://fonts.reown.com",
+              // Connect: Full Reown/WalletConnect CSP + RPC nodes + APIs
+              "connect-src 'self' " + [
+                // Upstash Redis
+                "https://*.upstash.io",
+                // Base RPC endpoints
+                "https://mainnet.base.org",
+                "https://base.llamarpc.com", 
+                "https://base-mainnet.public.blastapi.io",
+                "https://base.publicnode.com",
+                "https://1rpc.io",
+                // Reown/WalletConnect (from official docs)
+                "https://rpc.walletconnect.com",
+                "https://rpc.walletconnect.org",
+                "https://relay.walletconnect.com",
+                "https://relay.walletconnect.org",
+                "wss://relay.walletconnect.com",
+                "wss://relay.walletconnect.org",
+                "https://pulse.walletconnect.com",
+                "https://pulse.walletconnect.org",
+                "https://api.web3modal.com",
+                "https://api.web3modal.org",
+                "https://keys.walletconnect.com",
+                "https://keys.walletconnect.org",
+                "https://notify.walletconnect.com",
+                "https://notify.walletconnect.org",
+                "https://echo.walletconnect.com",
+                "https://echo.walletconnect.org",
+                "https://push.walletconnect.com",
+                "https://push.walletconnect.org",
+                // Coinbase
+                "https://*.coinbase.com",
+                "https://api.developer.coinbase.com",
+                "https://pay.coinbase.com",
+                "wss://www.walletlink.org",
+                // BaseGold
+                "https://*.basegold.io"
+              ].join(" "),
               // Frames: prevent clickjacking
               "frame-ancestors 'none'",
-              // Frame-src: allow Coinbase Pay iframe
-              "frame-src 'self' https://pay.coinbase.com https://*.coinbase.com",
+              // Frame-src: allow Coinbase Pay iframe + WalletConnect
+              "frame-src 'self' https://pay.coinbase.com https://*.coinbase.com https://verify.walletconnect.com https://verify.walletconnect.org https://secure.walletconnect.com https://secure.walletconnect.org",
               // Object/base restrictions
               "object-src 'none'",
               "base-uri 'self'",
